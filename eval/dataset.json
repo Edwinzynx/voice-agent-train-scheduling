@@ -1,0 +1,65 @@
+[
+  {
+    "id": "scenario-1-search",
+    "description": "Standard train search from Delhi to Varanasi in English",
+    "turns": [
+      "Hello, I want to find trains.",
+      "From Delhi",
+      "To Varanasi",
+      "For tomorrow please",
+      "Yes, that's correct."
+    ],
+    "expected_intent": "FIND_TRAINS",
+    "expected_slots": {
+      "source": "Delhi",
+      "destination": "Varanasi",
+      "date": "2026-06-19"
+    }
+  },
+  {
+    "id": "scenario-2-book-hinglish",
+    "description": "Stateful ticket booking in Hinglish with passenger details",
+    "turns": [
+      "Bhai ek ticket book karni hai.",
+      "Delhi se Bhopal",
+      "Kal chalna hai",
+      "Sleeper coach chahiye",
+      "Yatri ka naam hai Amit",
+      "Haan ticket confirm kar do"
+    ],
+    "expected_intent": "BOOK_TICKET",
+    "expected_slots": {
+      "source": "Delhi",
+      "destination": "Bhopal",
+      "date": "2026-06-19",
+      "class_code": "SL",
+      "passenger_name": "Amit"
+    }
+  },
+  {
+    "id": "scenario-3-status",
+    "description": "PNR status check for existing booking",
+    "turns": [
+      "Mujhe PNR status check karna hai",
+      "PNR number hai 4829384729",
+      "Yes"
+    ],
+    "expected_intent": "GET_PNR_STATUS",
+    "expected_slots": {
+      "pnr_number": "4829384729"
+    }
+  },
+  {
+    "id": "scenario-4-cancel-hindi",
+    "description": "Ticket cancellation in Hindi",
+    "turns": [
+      "Mera ticket cancel kar do.",
+      "Das digit number hai 4829384729",
+      "Haan cancel kar dijiye"
+    ],
+    "expected_intent": "CANCEL_TICKET",
+    "expected_slots": {
+      "pnr_number": "4829384729"
+    }
+  }
+]

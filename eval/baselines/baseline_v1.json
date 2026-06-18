@@ -1,0 +1,9 @@
+{
+  "dataset_version": "1.0",
+  "total_cases": 4,
+  "overall_success_rate": 100.0,
+  "avg_slot_accuracy": 100.0,
+  "p50_latency_ms": 15.0,
+  "p90_latency_ms": 35.0,
+  "p99_latency_ms": 50.0
+}
