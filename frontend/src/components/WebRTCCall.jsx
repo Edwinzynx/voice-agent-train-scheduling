@@ -211,22 +211,21 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
         }
 
         recognition.onspeechstart = () => {
-          if (agentSpeakingRef.current) {
-            console.log("Barge-in: speech started. Interrupting agent playback.")
-            window.speechSynthesis.cancel()
-            if (activeAudioRef.current) {
-              try { activeAudioRef.current.pause() } catch(e){}
-            }
-            setAgentSpeaking(false)
-          }
+          console.log("Mic detected speech sound onset.")
         }
 
         recognition.onresult = (event) => {
           const resultText = event.results[0][0].transcript
           
-          // Double check interruption on result as well
-          if (agentSpeakingRef.current) {
-            console.log("Barge-in: speech result ready. Interrupting agent.")
+          // Double check interruption on result as well using conversational fillers/interrupt words
+          const textClean = resultText.trim().toLowerCase()
+          const words = textClean.split(/\s+/)
+          const interruptWords = ["uh", "uhh", "um", "excuse", "wait", "stop", "hold on", "listen", "no", "hey", "hello", "sorry", "cancel", "bhai", "suno", "ek min", "ek minute"]
+          const hasInterruptWord = interruptWords.some(w => textClean.includes(w))
+          const isSignificantSpeech = words.length >= 2 || textClean.length >= 5
+          
+          if (agentSpeakingRef.current && (hasInterruptWord || isSignificantSpeech)) {
+            console.log("Barge-in: valid speech interruption detected:", resultText)
             window.speechSynthesis.cancel()
             if (activeAudioRef.current) {
               try { activeAudioRef.current.pause() } catch(e){}
