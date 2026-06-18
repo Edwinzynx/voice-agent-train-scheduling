@@ -286,11 +286,14 @@ def run_brain_step(state: str, user_input: str, context: dict) -> dict:
         if state == "INTENT":
             return call_groq_json(INTENT_SYSTEM_PROMPT, f"User message: {user_input}", api_key)
         elif state == "COLLECT":
+            import datetime
+            current_date = datetime.date.today().strftime("%Y-%m-%d")
             dialect = context.get("dialect", "Hinglish")
             formatted_prompt = SLOT_FILLER_SYSTEM_PROMPT.replace("{dialect}", dialect)
             available_trains = context.get("available_trains", [])
             
             user_prompt = (
+                f"Current Date: {current_date}\n"
                 f"Current slots table: {json.dumps(context.get('slots', {}))}\n"
                 f"Active Intent: {context.get('intent')}\n"
                 f"Selected Language Dialect: {dialect}\n"
@@ -321,11 +324,11 @@ def run_brain_step(state: str, user_input: str, context: dict) -> dict:
             
         elif state == "CONFIRM":
             user_prompt = f"Slots details: {json.dumps(context.get('slots', {}))}\nUser confirmation text: {user_input}"
-            formatted_prompt = CONFIRMATION_SYSTEM_PROMPT.format(details=json.dumps(context.get('slots', {})), dialect=context.get("dialect", "Hinglish"))
+            formatted_prompt = CONFIRMATION_SYSTEM_PROMPT.replace("{details}", json.dumps(context.get('slots', {}))).replace("{dialect}", context.get("dialect", "Hinglish"))
             return call_groq_json(formatted_prompt, user_prompt, api_key)
         elif state == "EXECUTE" or state == "END":
             user_prompt = f"Execution result: {json.dumps(context.get('result', {}))}"
-            formatted_prompt = EXECUTE_SYSTEM_PROMPT.format(result=json.dumps(context.get('result', {})), dialect=context.get("dialect", "Hinglish"))
+            formatted_prompt = EXECUTE_SYSTEM_PROMPT.replace("{result}", json.dumps(context.get('result', {}))).replace("{dialect}", context.get("dialect", "Hinglish"))
             return call_groq_json(formatted_prompt, user_prompt, api_key)
     except Exception as e:
         logger.error(f"Groq execution failed, falling back to mock brain state runner. Error: {e}")

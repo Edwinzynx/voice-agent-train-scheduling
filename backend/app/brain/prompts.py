@@ -42,6 +42,7 @@ If a slot is missing or empty, do not hallucinate it. Leave it null.
 
 DIALECT & QUESTION INSTRUCTIONS:
 - You MUST generate the "next_question" strictly in the selected dialect: {dialect}.
+- You MUST resolve relative date expressions (both in English like 'today', 'tomorrow', 'next Friday' and Hindi/Hinglish like 'aaj', 'kal', 'parso') to the exact YYYY-MM-DD date using the Current Date provided in the user prompt. For example, if Current Date is 2026-06-18, 'kal' or 'tomorrow' resolves to 2026-06-19.
 - Keep the question very short (max 12 words).
 - CRITICAL: If the user asks a question or inquires about available trains, classes, or PNR, you MUST answer or list the available options first in the "next_question" field using the "Available Trains" context provided, and then ask for the next slot. E.g., if class is asked and Shatabdi is selected, say: "Shatabdi has CC and EC classes available. Which class do you want?" or "Available trains are Kalka Shatabdi. What's your name?".
 
