@@ -267,7 +267,7 @@ def check_seat_availability(train_no: str, date: str, class_code: str, quota: st
         "price": price
     }
 
-def book_ticket(train_no: str, date: str, class_code: str, passengers: list, payment_confirmed: bool = False) -> dict:
+def book_ticket(train_no: str, date: str, class_code: str, passengers: list, payment_confirmed: bool = False, src: str = "Delhi", dst: str = "Mumbai") -> dict:
     """
     Book a ticket and return PNR.
     """
@@ -287,7 +287,7 @@ def book_ticket(train_no: str, date: str, class_code: str, passengers: list, pay
             break
             
     # Calculate price
-    availability = check_seat_availability(train_no, date, class_code)
+    availability = check_seat_availability(train_no, date, class_code, src=src, dst=dst)
     price_per_passenger = availability["price"]
     total_price = price_per_passenger * len(passengers)
     
@@ -295,8 +295,8 @@ def book_ticket(train_no: str, date: str, class_code: str, passengers: list, pay
         "pnr": pnr,
         "train_no": train_no,
         "train_name": train_name,
-        "src": availability.get("src", "Delhi"),
-        "dst": availability.get("dst", "Mumbai"),
+        "src": src,
+        "dst": dst,
         "date": date,
         "class_code": class_code,
         "passengers": passengers,

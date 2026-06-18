@@ -164,7 +164,28 @@ class FSMCoordinator:
                 try:
                     res = irctc.find_trains(session.slots["source"], session.slots["destination"], session.slots.get("date") or "tomorrow")
                     if res.get("success"):
-                        available_trains = res.get("trains", [])
+                        trains = res.get("trains", [])
+                        for t in trains:
+                            class_details = {}
+                            for class_code in t.get("classes", []):
+                                try:
+                                    avail = irctc.check_seat_availability(
+                                        train_no=t["no"],
+                                        date=session.slots.get("date") or "tomorrow",
+                                        class_code=class_code,
+                                        src=session.slots["source"],
+                                        dst=session.slots["destination"]
+                                    )
+                                    if avail.get("success"):
+                                        class_details[class_code] = {
+                                            "seats": avail.get("seats_available", 0),
+                                            "status": avail.get("status", "AVAILABLE"),
+                                            "price": avail.get("price", 0.0)
+                                        }
+                                except Exception as e:
+                                    logger.error(f"Error checking class details in FSM: {e}")
+                            t["class_details"] = class_details
+                        available_trains = trains
                 except Exception as e:
                     logger.error(f"Error querying available trains for session context: {e}")
                     
@@ -245,7 +266,9 @@ class FSMCoordinator:
                     date=slots.get("date", "2026-06-25"),
                     class_code=slots.get("class_code", "3A"),
                     passengers=[passenger],
-                    payment_confirmed=True
+                    payment_confirmed=True,
+                    src=slots.get("source") or "Delhi",
+                    dst=slots.get("destination") or "Mumbai"
                 )
                 if res.get("success", False):
                     result = res["booking"]

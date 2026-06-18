@@ -142,6 +142,13 @@ def mock_fill_slots(user_input: str, current_slots: dict, intent: str, dialect: 
     for key, val in class_mappings.items():
         if key in text:
             slots["class_code"] = val
+            
+    if "cheaper" in text or "sasta" in text or "cheap" in text:
+        train_no = slots.get("train_no") or "12012"
+        if train_no in ["12002", "22436", "12012"]:
+            slots["class_code"] = "CC"
+        else:
+            slots["class_code"] = "SL"
 
     # Extract 10 digit PNR
     pnr_match = re.search(r"\b\d{10}\b", text)
@@ -304,6 +311,21 @@ def run_brain_step(state: str, user_input: str, context: dict) -> dict:
             
             # Programmatically compute all_slots_filled in Python to prevent LLM inconsistencies
             slots_returned = res.get("slots", {})
+            
+            # Programmatically clean up class_code slot synonyms
+            class_code = slots_returned.get("class_code")
+            if class_code:
+                cc_clean = str(class_code).strip().lower()
+                class_mapping = {
+                    "chair car": "CC", "cc": "CC", "chaircar": "CC",
+                    "executive class": "EC", "exec": "EC", "ec": "EC", "executive": "EC",
+                    "sleeper": "SL", "sl": "SL",
+                    "first ac": "1A", "1st ac": "1A", "1a": "1A",
+                    "second ac": "2A", "2nd ac": "2A", "2a": "2A",
+                    "third ac": "3A", "3rd ac": "3A", "3a": "3A"
+                }
+                slots_returned["class_code"] = class_mapping.get(cc_clean, class_code)
+                
             intent = context.get("intent", "")
             required_slots = []
             if intent == "BOOK_TICKET":

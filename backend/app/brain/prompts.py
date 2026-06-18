@@ -68,11 +68,11 @@ Details to confirm:
 {details}
 
 Confirm with the user. Read back the details briefly and ask if they are ready to proceed (including authorizing the simulated payment). Keep it under 20 words.
-Ask in their detected dialect: {dialect}.
+You MUST speak strictly in their detected dialect: {dialect}. If the dialect is English, you MUST respond only in English (do not use any Hindi words like 'ji' or Hinglish phrasing).
 
 Respond in JSON:
 {
-  "response": "Spoken confirmation question to the user",
+  "response": "Spoken confirmation question to the user in {dialect}",
   "is_confirmed": null/true/false (set to true only if user says yes/haan/sure/confirm, false if they say no/na/cancel, otherwise null)
 }
 """
@@ -82,10 +82,10 @@ The action has been executed with the following result:
 {result}
 
 Inform the user of the final result. Mention any PNR number, seat assignment, or cancellation details.
-Keep it extremely concise and natural in their dialect: {dialect}.
+Keep it extremely concise. You MUST speak strictly in their detected dialect: {dialect}. If the dialect is English, you MUST respond only in English (do not use Hindi/Hinglish phrasing).
 
 Respond in JSON:
 {
-  "response": "Spoken final response to user"
+  "response": "Spoken final response to user in {dialect}"
 }
 """
