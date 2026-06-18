@@ -10,6 +10,8 @@ export default function Settings({ backendUrl }) {
     twilio_auth_token: '',
     twilio_phone_number: '',
     sms_provider: 'mock',
+    llm_model: 'llama-3.3-70b-versatile',
+    elevenlabs_voice_id: '21m00Tcm4TlvDq8ikWAM',
     rapidapi_key: '',
     rapidapi_host: 'irctc1.p.rapidapi.com',
     use_real_irctc_api: false,
@@ -34,6 +36,8 @@ export default function Settings({ backendUrl }) {
           twilio_auth_token: '',
           twilio_phone_number: data.twilio_phone_number || '',
           sms_provider: data.sms_provider || 'mock',
+          llm_model: data.llm_model || 'llama-3.3-70b-versatile',
+          elevenlabs_voice_id: data.elevenlabs_voice_id || '21m00Tcm4TlvDq8ikWAM',
           rapidapi_key: '',
           rapidapi_host: data.rapidapi_host || 'irctc1.p.rapidapi.com',
           use_real_irctc_api: data.use_real_irctc_api || false,
@@ -137,7 +141,7 @@ export default function Settings({ backendUrl }) {
               outline: 'none'
             }}
           />
-          <div style={{ display: 'flex', alignItems: 'center', marginTop: '6px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', marginTop: '6px', marginBottom: '10px' }}>
             <input
               type="checkbox"
               id="use_mock_llm"
@@ -151,6 +155,34 @@ export default function Settings({ backendUrl }) {
             </label>
           </div>
         </div>
+
+        {/* LLM Model Selection */}
+        {!config.use_mock_llm && (
+          <div>
+            <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>
+              LLM Conversational Model
+            </label>
+            <select
+              name="llm_model"
+              value={config.llm_model}
+              onChange={handleChange}
+              style={{
+                width: '100%',
+                padding: '10px 12px',
+                borderRadius: '8px',
+                border: '1px solid var(--border-color)',
+                background: '#0f172a',
+                color: 'var(--text-primary)',
+                fontFamily: 'inherit',
+                outline: 'none'
+              }}
+            >
+              <option value="llama-3.3-70b-versatile">Llama 3.3 70B (Humane / Conversational - Recommended)</option>
+              <option value="llama-3.1-8b-instant">Llama 3.1 8B (Fast / Lightweight)</option>
+              <option value="llama3-70b-8192">Llama 3 70B</option>
+            </select>
+          </div>
+        )}
 
         {/* STT Settings */}
         <div>
@@ -225,6 +257,33 @@ export default function Settings({ backendUrl }) {
             </label>
           </div>
         </div>
+
+        {/* ElevenLabs Voice ID */}
+        {!config.use_mock_tts && (
+          <div style={{ paddingLeft: '20px', marginTop: '-8px', marginBottom: '4px' }}>
+            <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+              ElevenLabs Voice ID
+            </label>
+            <input
+              type="text"
+              name="elevenlabs_voice_id"
+              placeholder="e.g., 21m00Tcm4TlvDq8ikWAM"
+              value={config.elevenlabs_voice_id}
+              onChange={handleChange}
+              style={{
+                width: '100%',
+                padding: '8px 10px',
+                borderRadius: '6px',
+                border: '1px solid var(--border-color)',
+                background: 'rgba(255, 255, 255, 0.03)',
+                color: 'var(--text-primary)',
+                fontSize: '0.85rem',
+                fontFamily: 'inherit',
+                outline: 'none'
+              }}
+            />
+          </div>
+        )}
 
         {/* SMS provider */}
         <div>

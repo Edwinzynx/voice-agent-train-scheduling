@@ -30,7 +30,7 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
   }, [isMuted])
 
   const safeStartRecognition = () => {
-    if (recognitionRef.current && !isListeningRef.current && !agentSpeakingRef.current && !isMutedRef.current) {
+    if (recognitionRef.current && !isListeningRef.current && !isMutedRef.current) {
       try {
         recognitionRef.current.start()
       } catch (e) {
@@ -133,6 +133,7 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
           agentSpeakingRef.current = true
           window.speechSynthesis.cancel() // clear any queue
           const utterance = new SpeechSynthesisUtterance(text)
+          utterance.rate = 1.15
           
           // Try to select Hinglish/Hindi or English voice
           const voices = window.speechSynthesis.getVoices()
@@ -142,13 +143,22 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
           utterance.onend = () => {
             agentSpeakingRef.current = false
             setAgentSpeaking(false)
-            // Resume speech recognition once agent is done speaking
-            safeStartRecognition()
+            if (state === 'END') {
+              endCall()
+            } else {
+              safeStartRecognition()
+            }
+          }
+          utterance.onerror = () => {
+            agentSpeakingRef.current = false
+            setAgentSpeaking(false)
+            if (state === 'END') {
+              endCall()
+            } else {
+              safeStartRecognition()
+            }
           }
           window.speechSynthesis.speak(utterance)
-          
-          // Stop STT to prevent microphone from picking up computer speakers
-          safeStopRecognition()
         } else if (data.audio) {
           // Play server base64 audio stream
           setAgentSpeaking(true)
@@ -158,23 +168,20 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
           audio.onended = () => {
             agentSpeakingRef.current = false
             setAgentSpeaking(false)
-            safeStartRecognition()
+            if (state === 'END') {
+              endCall()
+            } else {
+              safeStartRecognition()
+            }
           }
           audio.play().catch(err => {
             console.error("Audio playback error:", err)
             agentSpeakingRef.current = false
             setAgentSpeaking(false)
+            if (state === 'END') {
+              endCall()
+            }
           })
-          
-          // Stop STT to prevent microphone from picking up computer speakers
-          safeStopRecognition()
-        }
-        
-        if (state === 'END') {
-          // Auto end call after brief delay
-          setTimeout(() => {
-            endCall()
-          }, 4000)
         }
       }
     }

@@ -21,6 +21,8 @@ class ConfigSchema(BaseModel):
     twilio_auth_token: str = ""
     twilio_phone_number: str = ""
     sms_provider: str = "mock"
+    llm_model: str = "llama-3.3-70b-versatile"
+    elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"
     rapidapi_key: str = ""
     rapidapi_host: str = "irctc1.p.rapidapi.com"
     use_real_irctc_api: bool = False
@@ -137,6 +139,8 @@ def get_config():
         "twilio_auth_token_masked": mask(settings.twilio_auth_token),
         "twilio_phone_number": settings.twilio_phone_number,
         "sms_provider": settings.sms_provider,
+        "llm_model": settings.llm_model,
+        "elevenlabs_voice_id": settings.elevenlabs_voice_id,
         "rapidapi_key_masked": mask(settings.rapidapi_key),
         "rapidapi_host": settings.rapidapi_host,
         "use_real_irctc_api": settings.use_real_irctc_api,

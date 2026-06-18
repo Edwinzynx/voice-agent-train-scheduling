@@ -134,8 +134,26 @@ class FSMCoordinator:
                 session.language_selected = True
             intent = result.get("intent", "UNKNOWN")
             
-            if intent != "UNKNOWN":
+            if intent == "END_CONVERSATION":
+                session.state = "END"
+                if session.dialect == "Hindi":
+                    response_text = "Hamari seva ka upyog karne ke liye dhanyawaad. Aapka din shubh ho! Alvida."
+                elif session.dialect == "Hinglish":
+                    response_text = "Train booking agent ko use karne ke liye thank you. Have a great day! Bye bye!"
+                else:
+                    response_text = "Thank you for using our train booking service. Have a wonderful day and a safe journey! Goodbye."
+            elif intent != "UNKNOWN":
                 session.intent = intent
+                # Clear previous slots for a fresh subsequent request
+                session.slots = {
+                    "source": None,
+                    "destination": None,
+                    "date": None,
+                    "class_code": None,
+                    "passenger_name": None,
+                    "pnr_number": None,
+                    "train_no": None
+                }
                 session.state = "COLLECT"
                 # Seed slots using this initial turn input
                 collect_result = run_brain_step("COLLECT", user_input, {"slots": session.slots, "intent": session.intent, "dialect": session.dialect})
@@ -313,7 +331,7 @@ class FSMCoordinator:
             logger.error(f"Error executing tool in FSM: {e}")
             result = {"error": "Internal system error occurred during execution."}
             
-        session.state = "END"
+        session.state = "INTENT"
         
         # Synthesize final message using LLM
         exec_result = run_brain_step("EXECUTE", "", {"result": result, "dialect": session.dialect})

@@ -31,9 +31,10 @@ async def synthesize_text(text: str) -> bytes:
                 "similarity_boost": 0.75
             }
         }
+        voice_id = settings.elevenlabs_voice_id or DEFAULT_VOICE_ID
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"https://api.elevenlabs.io/v1/text-to-speech/{DEFAULT_VOICE_ID}",
+                f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
                 json=data,
                 headers=headers,
                 timeout=15.0

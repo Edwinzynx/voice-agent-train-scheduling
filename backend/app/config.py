@@ -15,6 +15,12 @@ class AppSettings(BaseModel):
     twilio_phone_number: str = ""
     sms_provider: str = "mock"  # "mock" or "twilio" or "msg91"
     
+    # LLM config
+    llm_model: str = "llama-3.3-70b-versatile"
+    
+    # TTS config
+    elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"
+    
     # RapidAPI config
     rapidapi_key: str = ""
     rapidapi_host: str = "irctc1.p.rapidapi.com"
@@ -40,9 +46,11 @@ class ConfigManager:
         self.settings.groq_api_key = os.getenv("GROQ_API_KEY", "")
         self.settings.deepgram_api_key = os.getenv("DEEPGRAM_API_KEY", "")
         self.settings.elevenlabs_api_key = os.getenv("ELEVENLABS_API_KEY", "")
+        self.settings.elevenlabs_voice_id = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
         self.settings.twilio_account_sid = os.getenv("TWILIO_ACCOUNT_SID", "")
         self.settings.twilio_auth_token = os.getenv("TWILIO_AUTH_TOKEN", "")
         self.settings.twilio_phone_number = os.getenv("TWILIO_PHONE_NUMBER", "")
+        self.settings.llm_model = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
         self.settings.rapidapi_key = os.getenv("RAPIDAPI_KEY", "")
         self.settings.rapidapi_host = os.getenv("RAPIDAPI_HOST", "irctc1.p.rapidapi.com")
         self.settings.use_real_irctc_api = os.getenv("USE_REAL_IRCTC_API", "False").lower() in ("true", "1", "yes")

@@ -18,13 +18,14 @@ def call_groq_json(system_prompt: str, user_prompt: str, api_key: str) -> dict:
     Calls Groq chat completion API with JSON response format.
     """
     try:
+        model_name = config_manager.settings.llm_model or "llama-3.3-70b-versatile"
         client = Groq(api_key=api_key)
         chat_completion = client.chat.completions.create(
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            model="llama-3.1-8b-instant",
+            model=model_name,
             response_format={"type": "json_object"},
             temperature=0.1,
             max_tokens=500
@@ -47,17 +48,23 @@ def mock_classify_intent(user_input: str) -> dict:
     lang = "Hinglish" if (is_hindi and is_english) else "Hindi" if is_hindi else "English"
     
     intent = "UNKNOWN"
+    # 0. Check for end of conversation phrases
+    if any(phrase in text for phrase in ["no more", "nothing", "no thanks", "thank you", "thanks", "bye", "exit", "stop", "na", "nahi", "bas", "that is all", "that's it"]):
+        if not any(word in text for word in ["cancel", "book", "status", "seat", "avail", "tomorrow", "kal", "se", "ko"]):
+            intent = "END_CONVERSATION"
+            
     # Re-ordered checks to prevent general words like 'ticket' in cancel flows matching BOOK_TICKET
-    if "cancel" in text or "radd" in text or "cancellation" in text:
-        intent = "CANCEL_TICKET"
-    elif "status" in text or "pnr" in text or "chalti" in text or "live" in text:
-        intent = "GET_PNR_STATUS"
-    elif "seat" in text or "avail" in text or "khali" in text:
-        intent = "CHECK_SEAT"
-    elif "train" in text or "gaadi" in text or "search" in text or "khoj" in text:
-        intent = "FIND_TRAINS"
-    elif "book" in text or "booking" in text or "ticket" in text or "kar do" in text or "yatra" in text:
-        intent = "BOOK_TICKET"
+    if intent == "UNKNOWN":
+        if "cancel" in text or "radd" in text or "cancellation" in text:
+            intent = "CANCEL_TICKET"
+        elif "status" in text or "pnr" in text or "chalti" in text or "live" in text:
+            intent = "GET_PNR_STATUS"
+        elif "seat" in text or "avail" in text or "khali" in text:
+            intent = "CHECK_SEAT"
+        elif "train" in text or "gaadi" in text or "search" in text or "khoj" in text:
+            intent = "FIND_TRAINS"
+        elif "book" in text or "booking" in text or "ticket" in text or "kar do" in text or "yatra" in text:
+            intent = "BOOK_TICKET"
         
     return {
         "intent": intent,
@@ -198,56 +205,58 @@ def mock_fill_slots(user_input: str, current_slots: dict, intent: str, dialect: 
         required = ["train_no", "date", "class_code"]
     elif intent == "CANCEL_TICKET" or intent == "GET_PNR_STATUS":
         required = ["pnr_number"]
+    elif intent == "END_CONVERSATION":
+        required = []
 
     missing = [s for s in required if not slots.get(s)]
     all_filled = len(missing) == 0
 
-    next_question = "How can I help you?"
+    next_question = "How can I help you today?"
     if not all_filled:
         next_slot = missing[0]
         if dialect == "Hindi":
             if next_slot == "source":
-                next_question = "Aap kis station se chalna chahte hain?"
+                next_question = "Main aapki sahayata kar sakta hoon. Aap kis station se yatra shuru karna chahte hain?"
             elif next_slot == "destination":
-                next_question = "Aapko kis station tak jana hai?"
+                next_question = "Bahut badhiya. Aapko kis station tak jana hai?"
             elif next_slot == "date":
-                next_question = "Yatra ki tareekh kya hai?"
+                next_question = "Aap kis tareekh ko yatra karna chahte hain?"
             elif next_slot == "class_code":
-                next_question = "Kaunsa coach class chahiye? Jaise 3A ya sleeper."
+                next_question = "Aap kis class mein seat book karna chahenge, jaise Sleeper ya 3A?"
+            elif next_slot == "passenger_name":
+                next_question = "Kripya yatri ka naam batayein."
+            elif next_slot == "pnr_number":
+                next_question = "Kripya apna das-digit ka PNR number batayein."
+            elif next_slot == "train_no":
+                next_question = "Yatra ke liye train number kya hai?"
+        elif dialect == "English":
+            if next_slot == "source":
+                next_question = "I can definitely help with that. From which station would you like to start your journey?"
+            elif next_slot == "destination":
+                next_question = "Great. And what is your destination station?"
+            elif next_slot == "date":
+                next_question = "What date are you planning to travel?"
+            elif next_slot == "class_code":
+                next_question = "Which coach class do you prefer, such as Sleeper or 3rd AC?"
+            elif next_slot == "passenger_name":
+                next_question = "Could I please get the passenger's name for the ticket?"
+            elif next_slot == "pnr_number":
+                next_question = "Please state your 10-digit PNR number."
+            elif next_slot == "train_no":
+                next_question = "Could you please provide the 5-digit train number?"
+        else: # Hinglish / Default
+            if next_slot == "source":
+                next_question = "Sure, main booking mein help karunga. Aap kis station se chalna chahte hain?"
+            elif next_slot == "destination":
+                next_question = "Perfect. Aapko kis station tak jana hai?"
+            elif next_slot == "date":
+                next_question = "Kis date ko yatra karni hai?"
+            elif next_slot == "class_code":
+                next_question = "Kaunsa coach class book karna hai? Jaise 3A ya Sleeper."
             elif next_slot == "passenger_name":
                 next_question = "Yatri ka naam kya hai?"
             elif next_slot == "pnr_number":
                 next_question = "Apna das-digit ka PNR number batayein."
-            elif next_slot == "train_no":
-                next_question = "Gaadi sankhya (Train number) kya hai?"
-        elif dialect == "English":
-            if next_slot == "source":
-                next_question = "Where is your source station?"
-            elif next_slot == "destination":
-                next_question = "Where is your destination station?"
-            elif next_slot == "date":
-                next_question = "What is the date of travel?"
-            elif next_slot == "class_code":
-                next_question = "Which coach class do you want, like 3A or Sleeper?"
-            elif next_slot == "passenger_name":
-                next_question = "What is the passenger name?"
-            elif next_slot == "pnr_number":
-                next_question = "Please state your 10-digit PNR number."
-            elif next_slot == "train_no":
-                next_question = "What is the 5-digit train number?"
-        else: # Hinglish / Default
-            if next_slot == "source":
-                next_question = "Aap kis station se chalna chahte hain? (Where is your source station?)"
-            elif next_slot == "destination":
-                next_question = "Aapko kis station tak jana hai? (Where is your destination station?)"
-            elif next_slot == "date":
-                next_question = "Yatra ki tareekh kya hai? (What is the date of travel?)"
-            elif next_slot == "class_code":
-                next_question = "Kaunsa coach class chahiye? Jaise 3A, Sleeper ya 2A."
-            elif next_slot == "passenger_name":
-                next_question = "Yatri ka naam kya hai? (What is the passenger name?)"
-            elif next_slot == "pnr_number":
-                next_question = "Apna das-digit ka PNR number batayein. (Please state your 10-digit PNR.)"
             elif next_slot == "train_no":
                 next_question = "Gaadi sankhya (Train number) kya hai?"
 
@@ -274,7 +283,12 @@ def run_brain_step(state: str, user_input: str, context: dict) -> dict:
             text = user_input.lower()
             is_confirmed = True if any(word in text for word in ["yes", "haan", "sure", "confirm", "theek", "okay"]) else False if any(word in text for word in ["no", "na", "cancel", "nahi", "galat"]) else None
             
-            resp = "Theek hai, main process kar raha hoon." if is_confirmed else "Booking radd kar di gayi hai." if is_confirmed is False else "Kya main aage badhoon? Kripya haan ya naa bolech."
+            if is_confirmed:
+                resp = "Absolutely, I am booking that ticket now. Please wait a moment."
+            elif is_confirmed is False:
+                resp = "Understood. I have cancelled the process."
+            else:
+                resp = "Are you ready to proceed with booking? Please say yes or no."
             return {
                 "response": resp,
                 "is_confirmed": is_confirmed
@@ -282,7 +296,7 @@ def run_brain_step(state: str, user_input: str, context: dict) -> dict:
         elif state == "EXECUTE" or state == "END":
             # Just return a greeting or completion string
             return {
-                "response": f"Dhanyawaad, aapka kaam safal raha! Result: {context.get('result', '')}"
+                "response": f"Wonderful, everything is successfully processed! Details: {context.get('result', '')}. Have a safe journey!"
             }
         # Fallback
         return {"response": "Hello, how can I help you today?"}
@@ -336,6 +350,8 @@ def run_brain_step(state: str, user_input: str, context: dict) -> dict:
                 required_slots = ["train_no", "date", "class_code"]
             elif intent == "CANCEL_TICKET" or intent == "GET_PNR_STATUS":
                 required_slots = ["pnr_number"]
+            elif intent == "END_CONVERSATION":
+                required_slots = []
                 
             def is_filled(val):
                 return val is not None and str(val).strip() != "" and str(val).lower() not in ["null", "none"]

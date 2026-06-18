@@ -7,7 +7,8 @@
       "From Delhi",
       "To Varanasi",
       "For tomorrow please",
-      "Yes, that's correct."
+      "Yes, that's correct.",
+      "No, thank you."
     ],
     "expected_intent": "FIND_TRAINS",
     "expected_slots": {
@@ -25,7 +26,8 @@
       "Kal chalna hai",
       "Sleeper coach chahiye",
       "Yatri ka naam hai Amit",
-      "Haan ticket confirm kar do"
+      "Haan ticket confirm kar do",
+      "Nahi, bas, thank you."
     ],
     "expected_intent": "BOOK_TICKET",
     "expected_slots": {
@@ -42,7 +44,8 @@
     "turns": [
       "Mujhe PNR status check karna hai",
       "PNR number hai 4829384729",
-      "Yes"
+      "Yes",
+      "No, that is all."
     ],
     "expected_intent": "GET_PNR_STATUS",
     "expected_slots": {
@@ -55,7 +58,8 @@
     "turns": [
       "Mera ticket cancel kar do.",
       "Das digit number hai 4829384729",
-      "Haan cancel kar dijiye"
+      "Haan cancel kar dijiye",
+      "No, thanks."
     ],
     "expected_intent": "CANCEL_TICKET",
     "expected_slots": {
