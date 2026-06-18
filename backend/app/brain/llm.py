@@ -10,7 +10,7 @@ from ..tools import irctc
 logger = logging.getLogger(__name__)
 
 # List of typical stations for mock parsing
-MOCK_STATIONS = ["delhi", "mumbai", "bhopal", "varanasi", "lucknow", "patna", "bangalore", "chennai", "pune", "ernakulam", "chandigarh"]
+MOCK_STATIONS = ["delhi", "mumbai", "bhopal", "varanasi", "lucknow", "patna", "bangalore", "chennai", "pune", "ernakulam", "chandigarh", "patiala"]
 MOCK_CLASSES = ["1A", "2A", "3A", "SL", "CC", "EC"]
 
 def call_groq_json(system_prompt: str, user_prompt: str, api_key: str) -> dict:
@@ -114,32 +114,87 @@ def mock_fill_slots(user_input: str, current_slots: dict, intent: str, dialect: 
         }
     
     # Extract stations with robust Hinglish & English patterns
-    # 1. Combined patterns: "X se Y" (Hinglish) or "from X to Y" (English)
-    se_match = re.search(r"([a-z]+)\s+se\s+([a-z]+)", text)
-    from_to_match = re.search(r"from\s+([a-z]+)\s+to\s+([a-z]+)", text)
+    # 1. Define list of stop words to avoid extracting command keywords, classes, dates, etc., as stations
+    STOP_WORDS = {
+        "tomorrow", "today", "yesterday", "kal", "aaj", "train", "ticket", "book", 
+        "cancel", "status", "seat", "avail", "sleeper", "chair", "class", "the", 
+        "a", "an", "is", "it", "to", "from", "se", "ko", "jana", "yatri", "naam", 
+        "name", "for", "on", "in", "at", "me", "mein", "ek", "do", "tin", "char", 
+        "please", "kripya", "yes", "no", "haan", "nahi", "bye", "thanks", "thank",
+        "destination", "source", "station", "that", "this", "would", "like", "want",
+        "prefer", "go", "going", "travel", "journey", "hi", "hello", "hey"
+    }
+
+    src_extracted = None
+    dst_extracted = None
     
-    if se_match and se_match.group(1) in MOCK_STATIONS and se_match.group(2) in MOCK_STATIONS:
-        slots["source"] = se_match.group(1).title()
-        slots["destination"] = se_match.group(2).title()
-    elif from_to_match and from_to_match.group(1) in MOCK_STATIONS and from_to_match.group(2) in MOCK_STATIONS:
-        slots["source"] = from_to_match.group(1).title()
-        slots["destination"] = from_to_match.group(2).title()
-    else:
-        # 2. Individual word patterns
-        for station in MOCK_STATIONS:
-            if station in text:
-                # E.g. "delhi se" or "from delhi" -> source
-                if re.search(r"from\s+" + station, text) or re.search(station + r"\s+se", text):
-                    slots["source"] = station.title()
-                # E.g. "to mumbai" or "se mumbai" or "mumbai jana" -> destination
-                elif re.search(r"to\s+" + station, text) or re.search(r"se\s+" + station, text) or re.search(station + r"\s+(?:jana|ko)", text):
-                    slots["destination"] = station.title()
-                else:
-                    # Default sequential assignment
-                    if not slots.get("source"):
-                        slots["source"] = station.title()
-                    elif not slots.get("destination") and slots.get("source") != station.title():
-                        slots["destination"] = station.title()
+    # 2. Try to extract source/destination from explicit prepositional patterns first
+    from_to_match = re.search(r"\bfrom\s+([a-zA-Z]+)\s+to\s+([a-zA-Z]+)\b", text)
+    se_match = re.search(r"\b([a-zA-Z]+)\s+se\s+([a-zA-Z]+)\b", text)
+    
+    if from_to_match:
+        c1, c2 = from_to_match.group(1), from_to_match.group(2)
+        if c1.lower() not in STOP_WORDS and c2.lower() not in STOP_WORDS:
+            src_extracted = c1.title()
+            dst_extracted = c2.title()
+    elif se_match:
+        c1, c2 = se_match.group(1), se_match.group(2)
+        if c1.lower() not in STOP_WORDS and c2.lower() not in STOP_WORDS:
+            src_extracted = c1.title()
+            dst_extracted = c2.title()
+            
+    if not src_extracted:
+        from_match = re.search(r"\bfrom\s+([a-zA-Z]+)\b", text)
+        se_single_match = re.search(r"\b([a-zA-Z]+)\s+se\b", text)
+        if from_match and from_match.group(1).lower() not in STOP_WORDS:
+            src_extracted = from_match.group(1).title()
+        elif se_single_match and se_single_match.group(1).lower() not in STOP_WORDS:
+            src_extracted = se_single_match.group(1).title()
+            
+    if not dst_extracted:
+        to_match = re.search(r"\bto\s+([a-zA-Z]+)\b", text)
+        ko_match = re.search(r"\b([a-zA-Z]+)\s+(?:ko|jana)\b", text)
+        if to_match and to_match.group(1).lower() not in STOP_WORDS:
+            dst_extracted = to_match.group(1).title()
+        elif ko_match and ko_match.group(1).lower() not in STOP_WORDS:
+            dst_extracted = ko_match.group(1).title()
+
+    if src_extracted:
+        slots["source"] = src_extracted
+    if dst_extracted:
+        slots["destination"] = dst_extracted
+        
+    # 3. Fallback: If slots are still missing, look for ANY words in user input that look like a station name
+    if not slots.get("source") or not slots.get("destination"):
+        potential_stations = []
+        cleaned_words = re.findall(r"\b[a-zA-Z]+\b", text)
+        for w in cleaned_words:
+            w_lower = w.lower()
+            if w_lower not in STOP_WORDS and len(w_lower) >= 3:
+                if w_lower not in ["sleeper", "chair", "exec"] and w_lower not in ["june", "july", "august", "september"]:
+                    potential_stations.append(w.title())
+                    
+        known_found = [s.title() for s in MOCK_STATIONS if s in text]
+        candidates = []
+        for s in known_found + potential_stations:
+            if s not in candidates:
+                candidates.append(s)
+                
+        if candidates:
+            if slots.get("source") and not slots.get("destination"):
+                filtered = [c for c in candidates if c.lower() != slots["source"].lower()]
+                if filtered:
+                    slots["destination"] = filtered[0]
+            elif not slots.get("source") and slots.get("destination"):
+                filtered = [c for c in candidates if c.lower() != slots["destination"].lower()]
+                if filtered:
+                    slots["source"] = filtered[0]
+            else:
+                if len(candidates) >= 2:
+                    slots["source"] = candidates[0]
+                    slots["destination"] = candidates[1]
+                elif len(candidates) == 1:
+                    slots["source"] = candidates[0]
 
     # Extract class codes with friendly synonyms mapping
     class_mappings = {
@@ -266,6 +321,36 @@ def mock_fill_slots(user_input: str, current_slots: dict, intent: str, dialect: 
         "all_slots_filled": all_filled
     }
 
+def run_mock_brain_step(state: str, user_input: str, context: dict) -> dict:
+    """
+    Offline rule-based fallback parser.
+    """
+    if state == "INTENT":
+        return mock_classify_intent(user_input)
+    elif state == "COLLECT":
+        return mock_fill_slots(user_input, context.get("slots", {}), context.get("intent", ""), context.get("dialect", "Hinglish"))
+    elif state == "CONFIRM":
+        text = user_input.lower()
+        is_confirmed = True if any(word in text for word in ["yes", "haan", "sure", "confirm", "theek", "okay"]) else False if any(word in text for word in ["no", "na", "cancel", "nahi", "galat"]) else None
+        
+        if is_confirmed:
+            resp = "Absolutely, I am booking that ticket now. Please wait a moment."
+        elif is_confirmed is False:
+            resp = "Understood. I have cancelled the process."
+        else:
+            resp = "Are you ready to proceed with booking? Please say yes or no."
+        return {
+            "response": resp,
+            "is_confirmed": is_confirmed
+        }
+    elif state == "EXECUTE" or state == "END":
+        # Just return a greeting or completion string
+        return {
+            "response": f"Wonderful, everything is successfully processed! Details: {context.get('result', '')}. Have a safe journey!"
+        }
+    # Fallback
+    return {"response": "Hello, how can I help you today?"}
+
 def run_brain_step(state: str, user_input: str, context: dict) -> dict:
     """
     Executes a single processing step in the brain.
@@ -274,32 +359,7 @@ def run_brain_step(state: str, user_input: str, context: dict) -> dict:
     settings = config_manager.settings
     
     if settings.use_mock_llm:
-        # Use offline rule-based parser
-        if state == "INTENT":
-            return mock_classify_intent(user_input)
-        elif state == "COLLECT":
-            return mock_fill_slots(user_input, context.get("slots", {}), context.get("intent", ""), context.get("dialect", "Hinglish"))
-        elif state == "CONFIRM":
-            text = user_input.lower()
-            is_confirmed = True if any(word in text for word in ["yes", "haan", "sure", "confirm", "theek", "okay"]) else False if any(word in text for word in ["no", "na", "cancel", "nahi", "galat"]) else None
-            
-            if is_confirmed:
-                resp = "Absolutely, I am booking that ticket now. Please wait a moment."
-            elif is_confirmed is False:
-                resp = "Understood. I have cancelled the process."
-            else:
-                resp = "Are you ready to proceed with booking? Please say yes or no."
-            return {
-                "response": resp,
-                "is_confirmed": is_confirmed
-            }
-        elif state == "EXECUTE" or state == "END":
-            # Just return a greeting or completion string
-            return {
-                "response": f"Wonderful, everything is successfully processed! Details: {context.get('result', '')}. Have a safe journey!"
-            }
-        # Fallback
-        return {"response": "Hello, how can I help you today?"}
+        return run_mock_brain_step(state, user_input, context)
 
     # Real LLM Call using Groq
     api_key = settings.groq_api_key
@@ -370,6 +430,5 @@ def run_brain_step(state: str, user_input: str, context: dict) -> dict:
             return call_groq_json(formatted_prompt, user_prompt, api_key)
     except Exception as e:
         logger.error(f"Groq execution failed, falling back to mock brain state runner. Error: {e}")
-        # Dynamic fallback on runtime error
-        settings.use_mock_llm = True
-        return run_brain_step(state, user_input, context)
+        # Fall back to mock runner for this step, but do not set settings.use_mock_llm permanently.
+        return run_mock_brain_step(state, user_input, context)
