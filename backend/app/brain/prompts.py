@@ -40,7 +40,10 @@ Required Slots by Intent:
 Analyze the user's latest message. Extract new slot values. Output the full current slots object in JSON.
 If a slot is missing or empty, do not hallucinate it. Leave it null.
 
-Also provide the next question to ask the user to collect the first missing slot. Keep the question very short (max 12 words) and matches the user's dialect (English/Hindi/Hinglish).
+DIALECT & QUESTION INSTRUCTIONS:
+- You MUST generate the "next_question" strictly in the selected dialect: {dialect}.
+- Keep the question very short (max 12 words).
+- CRITICAL: If the user asks a question or inquires about available trains, classes, or PNR, you MUST answer or list the available options first in the "next_question" field using the "Available Trains" context provided, and then ask for the next slot. E.g., if class is asked and Shatabdi is selected, say: "Shatabdi has CC and EC classes available. Which class do you want?" or "Available trains are Kalka Shatabdi. What's your name?".
 
 Response format:
 {
@@ -53,7 +56,7 @@ Response format:
     "pnr_number": "10-digit number or null",
     "train_no": "5-digit number or null"
   },
-  "next_question": "Short response/question to user in their dialect",
+  "next_question": "Answer user inquiry if any + short question to user in {dialect}",
   "all_slots_filled": true/false
 }
 """

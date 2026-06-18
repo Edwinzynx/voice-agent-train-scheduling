@@ -34,7 +34,12 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
       try {
         recognitionRef.current.start()
       } catch (e) {
-        console.warn("safeStartRecognition failed:", e)
+        // Defensive check: if it is already started, keep isListeningRef in sync
+        if (e.message && (e.message.includes("already started") || e.name === "InvalidStateError")) {
+          isListeningRef.current = true;
+        } else {
+          console.warn("safeStartRecognition failed:", e)
+        }
       }
     }
   }
@@ -42,7 +47,9 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
   const safeStopRecognition = () => {
     if (recognitionRef.current && isListeningRef.current) {
       try {
-        recognitionRef.current.stop()
+        // Use abort() instead of stop() to immediately discard current audio buffer
+        // and prevent the microphone from picking up the agent's voice.
+        recognitionRef.current.abort()
       } catch (e) {
         console.warn("safeStopRecognition failed:", e)
       }
@@ -123,6 +130,7 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
         if (mockTts) {
           // Play via browser speechSynthesis
           setAgentSpeaking(true)
+          agentSpeakingRef.current = true
           window.speechSynthesis.cancel() // clear any queue
           const utterance = new SpeechSynthesisUtterance(text)
           
@@ -132,28 +140,34 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
           if (hindiVoice) utterance.voice = hindiVoice
           
           utterance.onend = () => {
+            agentSpeakingRef.current = false
             setAgentSpeaking(false)
             // Resume speech recognition once agent is done speaking
             safeStartRecognition()
           }
           window.speechSynthesis.speak(utterance)
           
-          // Kept STT active for barge-in
+          // Stop STT to prevent microphone from picking up computer speakers
+          safeStopRecognition()
         } else if (data.audio) {
           // Play server base64 audio stream
           setAgentSpeaking(true)
+          agentSpeakingRef.current = true
           const audio = new Audio("data:audio/mpeg;base64," + data.audio)
           activeAudioRef.current = audio
           audio.onended = () => {
+            agentSpeakingRef.current = false
             setAgentSpeaking(false)
             safeStartRecognition()
           }
           audio.play().catch(err => {
             console.error("Audio playback error:", err)
+            agentSpeakingRef.current = false
             setAgentSpeaking(false)
           })
           
-          // Kept STT active for barge-in
+          // Stop STT to prevent microphone from picking up computer speakers
+          safeStopRecognition()
         }
         
         if (state === 'END') {

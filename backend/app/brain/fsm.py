@@ -21,6 +21,7 @@ class SessionState:
             "train_no": None
         }
         self.dialect = "Hinglish"
+        self.language_selected = False
         self.history = []
         self.latencies = []
         self.start_time = time.time()
@@ -90,14 +91,17 @@ class FSMCoordinator:
             
             if is_hinglish:
                 session.dialect = "Hinglish"
+                session.language_selected = True
                 session.state = "INTENT"
                 response_text = "Perfect, ab Hinglish mein baat karte hain. Aapko train book karni hai ya status check karna hai?"
             elif is_hindi:
                 session.dialect = "Hindi"
+                session.language_selected = True
                 session.state = "INTENT"
                 response_text = "Theek hai, ab hum Hindi mein baat karenge. Main aapki train booking mein kya sahayata kar sakta hoon?"
             elif is_english:
                 session.dialect = "English"
+                session.language_selected = True
                 session.state = "INTENT"
                 response_text = "Sure, let's speak in English. How can I assist you with your train journey today?"
             else:
@@ -107,8 +111,9 @@ class FSMCoordinator:
                 if intent != "UNKNOWN":
                     session.intent = intent
                     session.dialect = result.get("language_detected", "Hinglish")
+                    session.language_selected = True
                     session.state = "COLLECT"
-                    collect_result = run_brain_step("COLLECT", user_input, {"slots": session.slots, "intent": session.intent})
+                    collect_result = run_brain_step("COLLECT", user_input, {"slots": session.slots, "intent": session.intent, "dialect": session.dialect})
                     session.slots = collect_result.get("slots", session.slots)
                     
                     if collect_result.get("all_slots_filled", False):
@@ -124,14 +129,16 @@ class FSMCoordinator:
         elif session.state == "INTENT":
             # Classify intent
             result = run_brain_step("INTENT", user_input, {})
-            session.dialect = result.get("language_detected", "Hinglish")
+            if not getattr(session, "language_selected", False):
+                session.dialect = result.get("language_detected", "Hinglish")
+                session.language_selected = True
             intent = result.get("intent", "UNKNOWN")
             
             if intent != "UNKNOWN":
                 session.intent = intent
                 session.state = "COLLECT"
                 # Seed slots using this initial turn input
-                collect_result = run_brain_step("COLLECT", user_input, {"slots": session.slots, "intent": session.intent})
+                collect_result = run_brain_step("COLLECT", user_input, {"slots": session.slots, "intent": session.intent, "dialect": session.dialect})
                 session.slots = collect_result.get("slots", session.slots)
                 
                 if collect_result.get("all_slots_filled", False):
@@ -151,8 +158,24 @@ class FSMCoordinator:
                     response_text = "I can help you search trains, check seat availability, book, or cancel tickets. What would you like to do?"
                     
         elif session.state == "COLLECT":
+            # If source and destination stations are available, let's query trains to inject into context
+            available_trains = []
+            if session.slots.get("source") and session.slots.get("destination"):
+                try:
+                    res = irctc.find_trains(session.slots["source"], session.slots["destination"], session.slots.get("date") or "tomorrow")
+                    if res.get("success"):
+                        available_trains = res.get("trains", [])
+                except Exception as e:
+                    logger.error(f"Error querying available trains for session context: {e}")
+                    
+            context = {
+                "slots": session.slots,
+                "intent": session.intent,
+                "dialect": session.dialect,
+                "available_trains": available_trains
+            }
             # Fill remaining slots
-            collect_result = run_brain_step("COLLECT", user_input, {"slots": session.slots, "intent": session.intent})
+            collect_result = run_brain_step("COLLECT", user_input, context)
             session.slots = collect_result.get("slots", session.slots)
             
             if collect_result.get("all_slots_filled", False):
@@ -242,7 +265,9 @@ class FSMCoordinator:
                 result = irctc.check_seat_availability(
                     train_no=slots.get("train_no") or "12626",
                     date=slots.get("date"),
-                    class_code=slots.get("class_code", "3A")
+                    class_code=slots.get("class_code", "3A"),
+                    src=slots.get("source"),
+                    dst=slots.get("destination")
                 )
                 
             elif intent == "CANCEL_TICKET":

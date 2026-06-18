@@ -5,11 +5,12 @@ import logging
 from groq import Groq
 from ..config import config_manager
 from .prompts import INTENT_SYSTEM_PROMPT, SLOT_FILLER_SYSTEM_PROMPT, CONFIRMATION_SYSTEM_PROMPT, EXECUTE_SYSTEM_PROMPT
+from ..tools import irctc
 
 logger = logging.getLogger(__name__)
 
 # List of typical stations for mock parsing
-MOCK_STATIONS = ["delhi", "mumbai", "bhopal", "varanasi", "lucknow", "patna", "bangalore", "chennai", "pune", "ernakulam"]
+MOCK_STATIONS = ["delhi", "mumbai", "bhopal", "varanasi", "lucknow", "patna", "bangalore", "chennai", "pune", "ernakulam", "chandigarh"]
 MOCK_CLASSES = ["1A", "2A", "3A", "SL", "CC", "EC"]
 
 def call_groq_json(system_prompt: str, user_prompt: str, api_key: str) -> dict:
@@ -64,12 +65,46 @@ def mock_classify_intent(user_input: str) -> dict:
         "language_detected": lang
     }
 
-def mock_fill_slots(user_input: str, current_slots: dict, intent: str) -> dict:
+def mock_fill_slots(user_input: str, current_slots: dict, intent: str, dialect: str = "Hinglish") -> dict:
     """
     Rule-based local fallback for slot filling.
     """
     text = user_input.lower()
     slots = current_slots.copy()
+    
+    # Pre-check: Did the user ask for available trains?
+    if any(phrase in text for phrase in ["which train", "how many train", "trains are available", "available train", "give me options", "show trains"]):
+        src = slots.get("source")
+        dst = slots.get("destination")
+        if src and dst:
+            train_res = irctc.find_trains(src, dst, slots.get("date") or "tomorrow")
+            trains = train_res.get("trains", [])
+            if trains:
+                options_str = ", ".join([f"{t['name']} ({t['no']})" for t in trains])
+                next_question = f"Available trains: {options_str}. Which one would you like?"
+                return {
+                    "slots": slots,
+                    "next_question": next_question,
+                    "all_slots_filled": False
+                }
+
+    # Pre-check: Did the user ask for available classes?
+    if any(phrase in text for phrase in ["which class", "what class", "available class", "classes are available", "what losses", "losses are available", "which coach", "show class", "what coaches"]):
+        train_no = slots.get("train_no")
+        if train_no:
+            classes = ["1A", "2A", "3A", "SL"]
+            for train in irctc.MOCK_TRAINS:
+                if train["no"] == train_no:
+                    classes = train["classes"]
+            next_question = f"For train {train_no}, available classes are: {', '.join(classes)}. Which class do you want?"
+        else:
+            next_question = "Available classes are AC 1st Class (1A), 2nd Class (2A), 3rd Class (3A), and Sleeper (SL). Which one do you prefer?"
+            
+        return {
+            "slots": slots,
+            "next_question": next_question,
+            "all_slots_filled": False
+        }
     
     # Extract stations with robust Hinglish & English patterns
     # 1. Combined patterns: "X se Y" (Hinglish) or "from X to Y" (English)
@@ -163,20 +198,51 @@ def mock_fill_slots(user_input: str, current_slots: dict, intent: str) -> dict:
     next_question = "How can I help you?"
     if not all_filled:
         next_slot = missing[0]
-        if next_slot == "source":
-            next_question = "Aap kis station se chalna chahte hain? (Where is your source station?)"
-        elif next_slot == "destination":
-            next_question = "Aapko kis station tak jana hai? (Where is your destination station?)"
-        elif next_slot == "date":
-            next_question = "Yatra ki tareekh kya hai? (What is the date of travel?)"
-        elif next_slot == "class_code":
-            next_question = "Kaunsa coach class chahiye? Jaise 3A, Sleeper ya 2A."
-        elif next_slot == "passenger_name":
-            next_question = "Yatri ka naam kya hai? (What is the passenger name?)"
-        elif next_slot == "pnr_number":
-            next_question = "Apna das-digit ka PNR number batayein. (Please state your 10-digit PNR.)"
-        elif next_slot == "train_no":
-            next_question = "Gaadi sankhya (Train number) kya hai?"
+        if dialect == "Hindi":
+            if next_slot == "source":
+                next_question = "Aap kis station se chalna chahte hain?"
+            elif next_slot == "destination":
+                next_question = "Aapko kis station tak jana hai?"
+            elif next_slot == "date":
+                next_question = "Yatra ki tareekh kya hai?"
+            elif next_slot == "class_code":
+                next_question = "Kaunsa coach class chahiye? Jaise 3A ya sleeper."
+            elif next_slot == "passenger_name":
+                next_question = "Yatri ka naam kya hai?"
+            elif next_slot == "pnr_number":
+                next_question = "Apna das-digit ka PNR number batayein."
+            elif next_slot == "train_no":
+                next_question = "Gaadi sankhya (Train number) kya hai?"
+        elif dialect == "English":
+            if next_slot == "source":
+                next_question = "Where is your source station?"
+            elif next_slot == "destination":
+                next_question = "Where is your destination station?"
+            elif next_slot == "date":
+                next_question = "What is the date of travel?"
+            elif next_slot == "class_code":
+                next_question = "Which coach class do you want, like 3A or Sleeper?"
+            elif next_slot == "passenger_name":
+                next_question = "What is the passenger name?"
+            elif next_slot == "pnr_number":
+                next_question = "Please state your 10-digit PNR number."
+            elif next_slot == "train_no":
+                next_question = "What is the 5-digit train number?"
+        else: # Hinglish / Default
+            if next_slot == "source":
+                next_question = "Aap kis station se chalna chahte hain? (Where is your source station?)"
+            elif next_slot == "destination":
+                next_question = "Aapko kis station tak jana hai? (Where is your destination station?)"
+            elif next_slot == "date":
+                next_question = "Yatra ki tareekh kya hai? (What is the date of travel?)"
+            elif next_slot == "class_code":
+                next_question = "Kaunsa coach class chahiye? Jaise 3A, Sleeper ya 2A."
+            elif next_slot == "passenger_name":
+                next_question = "Yatri ka naam kya hai? (What is the passenger name?)"
+            elif next_slot == "pnr_number":
+                next_question = "Apna das-digit ka PNR number batayein. (Please state your 10-digit PNR.)"
+            elif next_slot == "train_no":
+                next_question = "Gaadi sankhya (Train number) kya hai?"
 
     return {
         "slots": slots,
@@ -196,7 +262,7 @@ def run_brain_step(state: str, user_input: str, context: dict) -> dict:
         if state == "INTENT":
             return mock_classify_intent(user_input)
         elif state == "COLLECT":
-            return mock_fill_slots(user_input, context.get("slots", {}), context.get("intent", ""))
+            return mock_fill_slots(user_input, context.get("slots", {}), context.get("intent", ""), context.get("dialect", "Hinglish"))
         elif state == "CONFIRM":
             text = user_input.lower()
             is_confirmed = True if any(word in text for word in ["yes", "haan", "sure", "confirm", "theek", "okay"]) else False if any(word in text for word in ["no", "na", "cancel", "nahi", "galat"]) else None
@@ -220,8 +286,39 @@ def run_brain_step(state: str, user_input: str, context: dict) -> dict:
         if state == "INTENT":
             return call_groq_json(INTENT_SYSTEM_PROMPT, f"User message: {user_input}", api_key)
         elif state == "COLLECT":
-            user_prompt = f"Current slots table: {json.dumps(context.get('slots', {}))}\nActive Intent: {context.get('intent')}\nUser input: {user_input}"
-            return call_groq_json(SLOT_FILLER_SYSTEM_PROMPT, user_prompt, api_key)
+            dialect = context.get("dialect", "Hinglish")
+            formatted_prompt = SLOT_FILLER_SYSTEM_PROMPT.replace("{dialect}", dialect)
+            available_trains = context.get("available_trains", [])
+            
+            user_prompt = (
+                f"Current slots table: {json.dumps(context.get('slots', {}))}\n"
+                f"Active Intent: {context.get('intent')}\n"
+                f"Selected Language Dialect: {dialect}\n"
+                f"Available Trains Context: {json.dumps(available_trains)}\n"
+                f"User input: {user_input}"
+            )
+            res = call_groq_json(formatted_prompt, user_prompt, api_key)
+            
+            # Programmatically compute all_slots_filled in Python to prevent LLM inconsistencies
+            slots_returned = res.get("slots", {})
+            intent = context.get("intent", "")
+            required_slots = []
+            if intent == "BOOK_TICKET":
+                required_slots = ["source", "destination", "date", "class_code", "passenger_name"]
+            elif intent == "FIND_TRAINS":
+                required_slots = ["source", "destination", "date"]
+            elif intent == "CHECK_SEAT":
+                required_slots = ["train_no", "date", "class_code"]
+            elif intent == "CANCEL_TICKET" or intent == "GET_PNR_STATUS":
+                required_slots = ["pnr_number"]
+                
+            def is_filled(val):
+                return val is not None and str(val).strip() != "" and str(val).lower() not in ["null", "none"]
+                
+            missing = [s for s in required_slots if not is_filled(slots_returned.get(s))]
+            res["all_slots_filled"] = len(missing) == 0
+            return res
+            
         elif state == "CONFIRM":
             user_prompt = f"Slots details: {json.dumps(context.get('slots', {}))}\nUser confirmation text: {user_input}"
             formatted_prompt = CONFIRMATION_SYSTEM_PROMPT.format(details=json.dumps(context.get('slots', {})), dialect=context.get("dialect", "Hinglish"))

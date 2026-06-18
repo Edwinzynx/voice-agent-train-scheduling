@@ -17,7 +17,7 @@ DATASET_FILE = EVAL_DIR / "dataset.json"
 BASELINE_FILE = EVAL_DIR / "baselines" / "baseline_v1.json"
 DB_FILE = Path(__file__).resolve().parent.parent / "backend" / "voice_agent.db"
 
-def run_eval():
+def run_eval(mode=None):
     print("==================================================")
     print("Starting LocoVoice Automated Evaluation Simulator ")
     print("==================================================")
@@ -39,10 +39,20 @@ def run_eval():
     else:
         print("Warning: No baseline file found. Skipping regression checks.")
 
-    # Force mock mode for fast local verification in CLI if no Groq key
-    if not config_manager.settings.groq_api_key:
-        print("No GROQ_API_KEY detected. Running evaluation in Mock/Offline mode.")
+    # Force mock/real mode based on CLI argument or API keys
+    if mode == "mock":
+        print("Forcing Mock/Offline mode via CLI.")
         config_manager.settings.use_mock_llm = True
+    elif mode == "real":
+        print("Forcing Real/LLM mode via CLI.")
+        config_manager.settings.use_mock_llm = False
+    else:
+        if not config_manager.settings.groq_api_key:
+            print("No GROQ_API_KEY detected. Defaulting evaluation to Mock/Offline mode.")
+            config_manager.settings.use_mock_llm = True
+        else:
+            print("GROQ_API_KEY detected. Defaulting evaluation to Real/LLM mode.")
+            config_manager.settings.use_mock_llm = False
         
     results = []
     total_cases = len(dataset)
@@ -150,9 +160,12 @@ def run_eval():
             
         # 3. Latency check (allow 50ms buffer)
         b_p50 = baseline.get("p50_latency_ms", 50.0)
-        if p50 > b_p50 + 50.0:
-            print(f" [!] SLOWDOWN: p50 latency increased to {p50:.1f}ms (Baseline: {b_p50:.1f}ms)")
-            regression_found = True
+        if config_manager.settings.use_mock_llm:
+            if p50 > b_p50 + 50.0:
+                print(f" [!] SLOWDOWN: p50 latency increased to {p50:.1f}ms (Baseline: {b_p50:.1f}ms)")
+                regression_found = True
+        else:
+            print(" [INFO] Skipping latency regression check since evaluation is running in Real/LLM mode.")
             
         if not regression_found:
             print(" [OK] All metrics pass. No regressions detected compared to baseline!")
@@ -205,4 +218,9 @@ def run_eval():
             print(f"Could not save evaluation to DB: {e}")
 
 if __name__ == "__main__":
-    run_eval()
+    import argparse
+    parser = argparse.ArgumentParser(description="LocoVoice Automated Evaluation Simulator")
+    parser.add_argument("--mode", choices=["mock", "real"], default=None, help="Force mock or real LLM/STT/TTS mode")
+    args = parser.parse_args()
+    
+    run_eval(args.mode)
