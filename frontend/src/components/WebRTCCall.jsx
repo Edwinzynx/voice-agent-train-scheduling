@@ -19,6 +19,7 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
   const agentSpeakingRef = useRef(false)
   const isMutedRef = useRef(false)
   const activeAudioRef = useRef(null)
+  const lastAgentSpokenTextRef = useRef('')
 
   // Sync state variables to refs to ensure safeStart/Stop always read fresh state
   useEffect(() => {
@@ -101,6 +102,7 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
       
       if (data.type === 'agent_response') {
         const text = data.text
+        lastAgentSpokenTextRef.current = text
         const state = data.state
         const newSlots = data.slots
         
@@ -217,8 +219,23 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
         recognition.onresult = (event) => {
           const resultText = event.results[0][0].transcript
           
-          // Double check interruption on result as well using conversational fillers/interrupt words
+          // Check if this result is just an echo of the agent's own speech
           const textClean = resultText.trim().toLowerCase()
+          const agentTextClean = (lastAgentSpokenTextRef.current || '').trim().toLowerCase()
+          const wordsResult = textClean.split(/\s+/).filter(w => w.length > 2)
+          let matchCount = 0
+          wordsResult.forEach(w => {
+            if (agentTextClean.includes(w)) matchCount++
+          })
+          const overlapRatio = wordsResult.length > 0 ? matchCount / wordsResult.length : 0
+          
+          // If the overlap is high and the phrase is substantial (e.g. >= 3 words), it's an echo loop.
+          if (overlapRatio > 0.5 && wordsResult.length >= 3) {
+            console.log("Echo loop detected and ignored:", resultText)
+            return
+          }
+          
+          // Double check interruption on result as well using conversational fillers/interrupt words
           const words = textClean.split(/\s+/)
           const interruptWords = ["uh", "uhh", "um", "excuse", "wait", "stop", "hold on", "listen", "no", "hey", "hello", "sorry", "cancel", "bhai", "suno", "ek min", "ek minute"]
           const hasInterruptWord = interruptWords.some(w => textClean.includes(w))
