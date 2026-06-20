@@ -15,26 +15,45 @@ MOCK_CLASSES = ["1A", "2A", "3A", "SL", "CC", "EC"]
 
 def call_groq_json(system_prompt: str, user_prompt: str, api_key: str) -> dict:
     """
-    Calls Groq chat completion API with JSON response format.
+    Calls Groq chat completion API with JSON response format and automatic rate limit retry.
     """
-    try:
-        model_name = config_manager.settings.llm_model or "llama-3.3-70b-versatile"
-        client = Groq(api_key=api_key)
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            model=model_name,
-            response_format={"type": "json_object"},
-            temperature=0.1,
-            max_tokens=500
-        )
-        response_text = chat_completion.choices[0].message.content
-        return json.loads(response_text)
-    except Exception as e:
-        logger.error(f"Error in Groq API call: {e}")
-        raise e
+    import time
+    model_name = config_manager.settings.llm_model or "llama-3.3-70b-versatile"
+    client = Groq(api_key=api_key)
+    
+    max_retries = 8
+    
+    for attempt in range(max_retries):
+        try:
+            chat_completion = client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                model=model_name,
+                response_format={"type": "json_object"},
+                temperature=0.1,
+                max_tokens=500
+            )
+            response_text = chat_completion.choices[0].message.content
+            return json.loads(response_text)
+        except Exception as e:
+            err_msg = str(e).lower()
+            is_rate_limit = any(x in err_msg for x in ["rate_limit", "rate limit", "429", "413", "limit exceeded", "too many requests", "tpm", "rpm"])
+            
+            if is_rate_limit and attempt < max_retries - 1:
+                # Sleep a flat 25 seconds to clear a major chunk of the rolling 1-minute window
+                sleep_time = 25.0
+                logger.warning(f"Groq API rate limit hit. Retrying in {sleep_time:.1f}s... Error: {e}")
+                time.sleep(sleep_time)
+            else:
+                logger.error(f"Error in Groq API call: {e}")
+                raise e
+
+def contains_word_or_phrase(text: str, item: str) -> bool:
+    if len(item) <= 3:
+        return bool(re.search(rf"\b{re.escape(item)}\b", text))
+    return item in text
 
 def mock_classify_intent(user_input: str) -> dict:
     """
@@ -43,14 +62,14 @@ def mock_classify_intent(user_input: str) -> dict:
     text = user_input.lower()
     
     # Detect language roughly
-    is_hindi = any(word in text for word in ["hai", "kab", "kya", "kar", "se", "ko", "tujhe", "radd", "gaadi"])
-    is_english = any(word in text for word in ["book", "cancel", "status", "train", "seat", "availability"])
+    is_hindi = any(contains_word_or_phrase(text, word) for word in ["hai", "kab", "kya", "kar", "se", "ko", "tujhe", "radd", "gaadi"])
+    is_english = any(contains_word_or_phrase(text, word) for word in ["book", "cancel", "status", "train", "seat", "availability"])
     lang = "Hinglish" if (is_hindi and is_english) else "Hindi" if is_hindi else "English"
     
     intent = "UNKNOWN"
     # 0. Check for end of conversation phrases
-    if any(phrase in text for phrase in ["no more", "nothing", "no thanks", "thank you", "thanks", "bye", "exit", "stop", "na", "nahi", "bas", "that is all", "that's it"]):
-        if not any(word in text for word in ["cancel", "book", "status", "seat", "avail", "tomorrow", "kal", "se", "ko"]):
+    if any(contains_word_or_phrase(text, phrase) for phrase in ["no more", "nothing", "no thanks", "thank you", "thanks", "bye", "exit", "stop", "na", "nahi", "bas", "that is all", "that's it"]):
+        if not any(contains_word_or_phrase(text, word) for word in ["cancel", "book", "status", "seat", "avail", "tomorrow", "kal", "se", "ko"]):
             intent = "END_CONVERSATION"
             
     # Re-ordered checks to prevent general words like 'ticket' in cancel flows matching BOOK_TICKET
@@ -72,7 +91,7 @@ def mock_classify_intent(user_input: str) -> dict:
         "language_detected": lang
     }
 
-def mock_fill_slots(user_input: str, current_slots: dict, intent: str, dialect: str = "Hinglish") -> dict:
+def mock_fill_slots(user_input: str, current_slots: dict, intent: str, dialect: str = "Hinglish", context: dict = None) -> dict:
     """
     Rule-based local fallback for slot filling.
     """
@@ -99,10 +118,7 @@ def mock_fill_slots(user_input: str, current_slots: dict, intent: str, dialect: 
     if any(phrase in text for phrase in ["which class", "what class", "available class", "classes are available", "what losses", "losses are available", "which coach", "show class", "what coaches"]):
         train_no = slots.get("train_no")
         if train_no:
-            classes = ["1A", "2A", "3A", "SL"]
-            for train in irctc.MOCK_TRAINS:
-                if train["no"] == train_no:
-                    classes = train["classes"]
+            classes = ["1A", "2A", "3A", "SL", "CC", "EC"]
             next_question = f"For train {train_no}, available classes are: {', '.join(classes)}. Which class do you want?"
         else:
             next_question = "Available classes are AC 1st Class (1A), 2nd Class (2A), 3rd Class (3A), and Sleeper (SL). Which one do you prefer?"
@@ -122,7 +138,18 @@ def mock_fill_slots(user_input: str, current_slots: dict, intent: str, dialect: 
         "name", "for", "on", "in", "at", "me", "mein", "ek", "do", "tin", "char", 
         "please", "kripya", "yes", "no", "haan", "nahi", "bye", "thanks", "thank",
         "destination", "source", "station", "that", "this", "would", "like", "want",
-        "prefer", "go", "going", "travel", "journey", "hi", "hello", "hey"
+        "prefer", "go", "going", "travel", "journey", "hi", "hello", "hey",
+        "which", "what", "where", "how", "who", "why", "when", "did", "do", "does",
+        "had", "have", "has", "i", "you", "he", "she", "they", "we", "me", "my",
+        "mine", "your", "yours", "his", "her", "hers", "their", "theirs", "our",
+        "ours", "mention", "mentioned", "say", "said", "tell", "told", "ask",
+        "asked", "know", "knew", "known", "please", "kindly", "could", "should",
+        "would", "can", "may", "might", "must", "shall", "will", "be", "been",
+        "being", "am", "are", "was", "were", "suits", "suit", "engineering", "source",
+        "station", "stations", "trains", "passenger", "name", "second",
+        "find", "search", "khoj", "get", "check", "show", "list", "give", "mujhe",
+        "karna", "pnr", "status", "cancel", "mera", "das", "digit", "number", "kar",
+        "do", "bhai", "ek", "chalna", "chahiye", "yatra", "confirm", "booking"
     }
 
     src_extracted = None
@@ -165,7 +192,7 @@ def mock_fill_slots(user_input: str, current_slots: dict, intent: str, dialect: 
         slots["destination"] = dst_extracted
         
     # 3. Fallback: If slots are still missing, look for ANY words in user input that look like a station name
-    if not slots.get("source") or not slots.get("destination"):
+    if intent in ("FIND_TRAINS", "BOOK_TICKET") and (not slots.get("source") or not slots.get("destination")):
         potential_stations = []
         cleaned_words = re.findall(r"\b[a-zA-Z]+\b", text)
         for w in cleaned_words:
@@ -195,6 +222,36 @@ def mock_fill_slots(user_input: str, current_slots: dict, intent: str, dialect: 
                     slots["destination"] = candidates[1]
                 elif len(candidates) == 1:
                     slots["source"] = candidates[0]
+
+    # 4. Index Selection Check
+    available_trains = context.get("available_trains", []) if context else []
+    if available_trains:
+        # Build options matching the frontend logic (train, class) sliced to 4 results
+        options = []
+        for train in available_trains:
+            train_no = train.get("no")
+            # Get class details keys if present, otherwise default to classes list
+            cls_keys = list(train.get("class_details", {}).keys()) if train.get("class_details") else train.get("classes", [])
+            for class_code in cls_keys:
+                options.append((train_no, class_code))
+        
+        # Limit options to top 4 to match frontend layout slice
+        options = options[:4]
+        
+        # Check text for index choices (phonetic and numeric)
+        idx = None
+        if any(contains_word_or_phrase(text, w) for w in ["first", "1st", "pehla", "pehli", "one", "number one", "option 1", "train 1", "पहला", "पहली", "एक"]):
+            idx = 0
+        elif any(contains_word_or_phrase(text, w) for w in ["second", "2nd", "dusra", "dusri", "doosra", "doosri", "two", "number two", "option 2", "train 2", "दूसरा", "दूसरी", "दो"]):
+            idx = 1
+        elif any(contains_word_or_phrase(text, w) for w in ["third", "3rd", "tisra", "tisri", "three", "number three", "option 3", "train 3", "तीसरा", "तीसरी", "तीन"]):
+            idx = 2
+        elif any(contains_word_or_phrase(text, w) for w in ["fourth", "4th", "chotha", "chautha", "chauthi", "four", "number four", "option 4", "train 4", "चौथा", "चौथी", "चार"]):
+            idx = 3
+            
+        if idx is not None and idx < len(options):
+            slots["train_no"] = options[idx][0]
+            slots["class_code"] = options[idx][1]
 
     # Extract class codes with friendly synonyms mapping
     class_mappings = {
@@ -232,11 +289,11 @@ def mock_fill_slots(user_input: str, current_slots: dict, intent: str, dialect: 
             break
             
     if not name_found:
-        name_match = re.search(r"(?:name is|for|naam|yatri)\s+([a-z]+)", text)
+        name_match = re.search(r"\b(?:yatri ka naam|yatri|naam|name is|name|passenger is|passenger|for)\s+(?:hai|is)?\s*([a-zA-Z]+)", text)
         if name_match:
             candidate = name_match.group(1)
             # Filter out helper words
-            if candidate not in MOCK_STATIONS and candidate not in ["tomorrow", "today", "ticket", "kal", "aaj", "se", "ko", "ka", "hai"]:
+            if candidate not in MOCK_STATIONS and candidate not in ["tomorrow", "today", "ticket", "kal", "aaj", "se", "ko", "ka", "hai", "is", "second"]:
                 slots["passenger_name"] = candidate.title()
 
     # Extract Date: tomorrow, today, or general string
@@ -328,17 +385,28 @@ def run_mock_brain_step(state: str, user_input: str, context: dict) -> dict:
     if state == "INTENT":
         return mock_classify_intent(user_input)
     elif state == "COLLECT":
-        return mock_fill_slots(user_input, context.get("slots", {}), context.get("intent", ""), context.get("dialect", "Hinglish"))
+        return mock_fill_slots(user_input, context.get("slots", {}), context.get("intent", ""), context.get("dialect", "Hinglish"), context)
     elif state == "CONFIRM":
         text = user_input.lower()
         is_confirmed = True if any(word in text for word in ["yes", "haan", "sure", "confirm", "theek", "okay"]) else False if any(word in text for word in ["no", "na", "cancel", "nahi", "galat"]) else None
         
+        intent = context.get("intent", "UNKNOWN")
         if is_confirmed:
-            resp = "Absolutely, I am booking that ticket now. Please wait a moment."
+            if intent == "BOOK_TICKET":
+                resp = "Absolutely, I am booking that ticket now. Please wait a moment."
+            elif intent == "FIND_TRAINS":
+                resp = "Sure, I am searching for trains now. Please wait."
+            else:
+                resp = "Absolutely, proceeding with your request now. Please wait."
         elif is_confirmed is False:
             resp = "Understood. I have cancelled the process."
         else:
-            resp = "Are you ready to proceed with booking? Please say yes or no."
+            if intent == "BOOK_TICKET":
+                resp = "Are you ready to proceed with booking? Please say yes or no."
+            elif intent == "FIND_TRAINS":
+                resp = "Should I proceed with searching trains? Please say yes or no."
+            else:
+                resp = "Should I proceed? Please say yes or no."
         return {
             "response": resp,
             "is_confirmed": is_confirmed
@@ -373,12 +441,19 @@ def run_brain_step(state: str, user_input: str, context: dict) -> dict:
             formatted_prompt = SLOT_FILLER_SYSTEM_PROMPT.replace("{dialect}", dialect)
             available_trains = context.get("available_trains", [])
             
+            # Strip out raw_train_data to prevent prompt token limit exhaustion
+            clean_trains = []
+            for t in available_trains:
+                t_clean = t.copy()
+                t_clean.pop("raw_train_data", None)
+                clean_trains.append(t_clean)
+            
             user_prompt = (
                 f"Current Date: {current_date}\n"
                 f"Current slots table: {json.dumps(context.get('slots', {}))}\n"
                 f"Active Intent: {context.get('intent')}\n"
                 f"Selected Language Dialect: {dialect}\n"
-                f"Available Trains Context: {json.dumps(available_trains)}\n"
+                f"Available Trains Context: {json.dumps(clean_trains)}\n"
                 f"User input: {user_input}"
             )
             res = call_groq_json(formatted_prompt, user_prompt, api_key)
@@ -421,8 +496,9 @@ def run_brain_step(state: str, user_input: str, context: dict) -> dict:
             return res
             
         elif state == "CONFIRM":
-            user_prompt = f"Slots details: {json.dumps(context.get('slots', {}))}\nUser confirmation text: {user_input}"
-            formatted_prompt = CONFIRMATION_SYSTEM_PROMPT.replace("{details}", json.dumps(context.get('slots', {}))).replace("{dialect}", context.get("dialect", "Hinglish"))
+            intent = context.get("intent", "UNKNOWN")
+            user_prompt = f"Intent: {intent}\nSlots details: {json.dumps(context.get('slots', {}))}\nUser confirmation text: {user_input}"
+            formatted_prompt = CONFIRMATION_SYSTEM_PROMPT.replace("{details}", json.dumps(context.get('slots', {}))).replace("{dialect}", context.get("dialect", "Hinglish")).replace("{intent}", intent)
             return call_groq_json(formatted_prompt, user_prompt, api_key)
         elif state == "EXECUTE" or state == "END":
             user_prompt = f"Execution result: {json.dumps(context.get('result', {}))}"

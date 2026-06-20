@@ -23,9 +23,6 @@ class ConfigSchema(BaseModel):
     sms_provider: str = "mock"
     llm_model: str = "llama-3.3-70b-versatile"
     elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"
-    rapidapi_key: str = ""
-    rapidapi_host: str = "irctc1.p.rapidapi.com"
-    use_real_irctc_api: bool = False
     use_mock_llm: bool = False
     use_mock_stt: bool = False
     use_mock_tts: bool = False
@@ -141,16 +138,12 @@ def get_config():
         "sms_provider": settings.sms_provider,
         "llm_model": settings.llm_model,
         "elevenlabs_voice_id": settings.elevenlabs_voice_id,
-        "rapidapi_key_masked": mask(settings.rapidapi_key),
-        "rapidapi_host": settings.rapidapi_host,
-        "use_real_irctc_api": settings.use_real_irctc_api,
         "use_mock_llm": settings.use_mock_llm,
         "use_mock_stt": settings.use_mock_stt,
         "use_mock_tts": settings.use_mock_tts,
         "has_groq": bool(settings.groq_api_key),
         "has_deepgram": bool(settings.deepgram_api_key),
-        "has_elevenlabs": bool(settings.elevenlabs_api_key),
-        "has_rapidapi": bool(settings.rapidapi_key)
+        "has_elevenlabs": bool(settings.elevenlabs_api_key)
     }
 
 @router.post("/config")
@@ -170,8 +163,5 @@ def update_config(payload: ConfigSchema):
         update_data.pop("elevenlabs_api_key", None)
     if payload.twilio_auth_token.endswith("****") or not payload.twilio_auth_token:
         update_data.pop("twilio_auth_token", None)
-    if payload.rapidapi_key.endswith("****") or not payload.rapidapi_key:
-        update_data.pop("rapidapi_key", None)
-        
     config_manager.save_config(update_data)
     return {"success": True, "message": "Configuration updated and saved to config.json."}

@@ -118,7 +118,7 @@ class FSMCoordinator:
                     
                     if collect_result.get("all_slots_filled", False):
                         session.state = "CONFIRM"
-                        confirm_result = run_brain_step("CONFIRM", "", {"slots": session.slots, "dialect": session.dialect})
+                        confirm_result = run_brain_step("CONFIRM", "", {"slots": session.slots, "dialect": session.dialect, "intent": session.intent})
                         response_text = confirm_result.get("response", "Please confirm details.")
                     else:
                         response_text = collect_result.get("next_question", "Please provide details.")
@@ -143,17 +143,36 @@ class FSMCoordinator:
                 else:
                     response_text = "Thank you for using our train booking service. Have a wonderful day and a safe journey! Goodbye."
             elif intent != "UNKNOWN":
+                # Preserve slots if transitioning from FIND_TRAINS to BOOK_TICKET
+                prev_source = session.slots.get("source")
+                prev_destination = session.slots.get("destination")
+                prev_date = session.slots.get("date")
+                
                 session.intent = intent
-                # Clear previous slots for a fresh subsequent request
-                session.slots = {
-                    "source": None,
-                    "destination": None,
-                    "date": None,
-                    "class_code": None,
-                    "passenger_name": None,
-                    "pnr_number": None,
-                    "train_no": None
-                }
+                
+                if intent == "BOOK_TICKET":
+                    session.slots = {
+                        "source": prev_source,
+                        "destination": prev_destination,
+                        "date": prev_date,
+                        "class_code": None,
+                        "passenger_name": None,
+                        "pnr_number": None,
+                        "train_no": None
+                    }
+                else:
+                    session.slots = {
+                        "source": None,
+                        "destination": None,
+                        "date": None,
+                        "class_code": None,
+                        "passenger_name": None,
+                        "pnr_number": None,
+                        "train_no": None
+                    }
+                
+                session.available_trains = []
+                session.last_action_result = None
                 session.state = "COLLECT"
                 # Seed slots using this initial turn input
                 collect_result = run_brain_step("COLLECT", user_input, {"slots": session.slots, "intent": session.intent, "dialect": session.dialect})
@@ -162,7 +181,7 @@ class FSMCoordinator:
                 if collect_result.get("all_slots_filled", False):
                     session.state = "CONFIRM"
                     # Generate confirmation question
-                    confirm_result = run_brain_step("CONFIRM", "", {"slots": session.slots, "dialect": session.dialect})
+                    confirm_result = run_brain_step("CONFIRM", "", {"slots": session.slots, "dialect": session.dialect, "intent": session.intent})
                     response_text = confirm_result.get("response", "Please confirm details.")
                 else:
                     response_text = collect_result.get("next_question", "Please provide details.")
@@ -176,6 +195,64 @@ class FSMCoordinator:
                     response_text = "I can help you search trains, check seat availability, book, or cancel tickets. What would you like to do?"
                     
         elif session.state == "COLLECT":
+            # 1. Check if the user intends to end the call or switch tasks
+            intent_result = run_brain_step("INTENT", user_input, {})
+            new_intent = intent_result.get("intent", "UNKNOWN")
+            
+            # Determine if we should switch intent
+            should_switch_intent = False
+            if new_intent == "END_CONVERSATION":
+                should_switch_intent = True
+            elif new_intent in ["CANCEL_TICKET", "GET_PNR_STATUS"]:
+                should_switch_intent = True
+            elif session.intent in ["FIND_TRAINS", "CHECK_SEAT", "UNKNOWN"] and new_intent == "BOOK_TICKET":
+                should_switch_intent = True
+            elif session.intent == "UNKNOWN" and new_intent != "UNKNOWN":
+                should_switch_intent = True
+                
+            if new_intent == "END_CONVERSATION" and should_switch_intent:
+                session.state = "END"
+                if session.dialect == "Hindi":
+                    response_text = "Hamari seva ka upyog karne ke liye dhanyawaad. Aapka din shubh ho! Alvida."
+                elif session.dialect == "Hinglish":
+                    response_text = "Train booking agent ko use karne ke liye thank you. Have a great day! Bye bye!"
+                else:
+                    response_text = "Thank you for using our train booking service. Have a wonderful day and a safe journey! Goodbye."
+                
+                latency_ms = (time.time() - start_time) * 1000
+                session.add_history("outbound", response_text, latency_ms)
+                return response_text
+                
+            elif should_switch_intent and new_intent != session.intent:
+                prev_source = session.slots.get("source")
+                prev_destination = session.slots.get("destination")
+                prev_date = session.slots.get("date")
+                
+                session.intent = new_intent
+                
+                if new_intent == "BOOK_TICKET":
+                    session.slots = {
+                        "source": prev_source,
+                        "destination": prev_destination,
+                        "date": prev_date,
+                        "class_code": None,
+                        "passenger_name": None,
+                        "pnr_number": None,
+                        "train_no": None
+                    }
+                else:
+                    session.slots = {
+                        "source": None,
+                        "destination": None,
+                        "date": None,
+                        "class_code": None,
+                        "passenger_name": None,
+                        "pnr_number": None,
+                        "train_no": None
+                    }
+                session.available_trains = []
+                session.last_action_result = None
+                
             # If source and destination stations are available, let's query trains to inject into context
             available_trains = []
             if session.slots.get("source") and session.slots.get("destination"):
@@ -192,7 +269,8 @@ class FSMCoordinator:
                                         date=session.slots.get("date") or "tomorrow",
                                         class_code=class_code,
                                         src=session.slots["source"],
-                                        dst=session.slots["destination"]
+                                        dst=session.slots["destination"],
+                                        train_data=t.get("raw_train_data")
                                     )
                                     if avail.get("success"):
                                         class_details[class_code] = {
@@ -213,29 +291,33 @@ class FSMCoordinator:
                 "dialect": session.dialect,
                 "available_trains": available_trains
             }
+            session.available_trains = available_trains
             # Fill remaining slots
             collect_result = run_brain_step("COLLECT", user_input, context)
             session.slots = collect_result.get("slots", session.slots)
             
             if collect_result.get("all_slots_filled", False):
                 session.state = "CONFIRM"
-                confirm_result = run_brain_step("CONFIRM", "", {"slots": session.slots, "dialect": session.dialect})
+                session.available_trains = []
+                confirm_result = run_brain_step("CONFIRM", "", {"slots": session.slots, "dialect": session.dialect, "intent": session.intent})
                 response_text = confirm_result.get("response", "Please confirm details.")
             else:
                 response_text = collect_result.get("next_question", "Please provide details.")
                 
         elif session.state == "CONFIRM":
             # Run confirmation evaluation
-            confirm_result = run_brain_step("CONFIRM", user_input, {"slots": session.slots, "dialect": session.dialect})
+            confirm_result = run_brain_step("CONFIRM", user_input, {"slots": session.slots, "dialect": session.dialect, "intent": session.intent})
             is_confirmed = confirm_result.get("is_confirmed", None)
             
             if is_confirmed is True:
                 # Transition to EXECUTE
                 session.state = "EXECUTE"
+                session.available_trains = []
                 response_text = self._execute_tool(session)
             elif is_confirmed is False:
                 # Transition to END
                 session.state = "END"
+                session.available_trains = []
                 if session.dialect == "Hindi":
                     response_text = "Request cancel kar di gayi hai. Dhanyawaad."
                 elif session.dialect == "Hinglish":
@@ -331,7 +413,9 @@ class FSMCoordinator:
             logger.error(f"Error executing tool in FSM: {e}")
             result = {"error": "Internal system error occurred during execution."}
             
+        session.last_action_result = result
         session.state = "INTENT"
+        session.available_trains = []
         
         # Synthesize final message using LLM
         exec_result = run_brain_step("EXECUTE", "", {"result": result, "dialect": session.dialect})

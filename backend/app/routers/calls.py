@@ -68,7 +68,9 @@ async def call_websocket(websocket: WebSocket, call_id: str, db: Session = Depen
         "text": greeting_text,
         "state": "GREET",
         "slots": active_connections[call_id]["fsm_session"].slots,
-        "dialect": active_connections[call_id]["fsm_session"].dialect
+        "dialect": active_connections[call_id]["fsm_session"].dialect,
+        "available_trains": [],
+        "last_action_result": None
     })
     
     try:
@@ -122,7 +124,9 @@ async def call_websocket(websocket: WebSocket, call_id: str, db: Session = Depen
                     "state": fsm_session.state,
                     "slots": fsm_session.slots,
                     "latency_ms": turn_latency,
-                    "dialect": fsm_session.dialect
+                    "dialect": fsm_session.dialect,
+                    "available_trains": getattr(fsm_session, "available_trains", []),
+                    "last_action_result": getattr(fsm_session, "last_action_result", None)
                 }
                 
                 # If we're using real TTS, synthesize and add base64 audio

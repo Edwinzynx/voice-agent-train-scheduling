@@ -2,6 +2,74 @@ import React, { useState, useEffect, useRef } from 'react'
 import { Phone, PhoneOff, Mic, MicOff, Volume2, Activity } from 'lucide-react'
 import AudioWave from './AudioWave'
 
+const getStationCode = (name) => {
+  if (!name) return '';
+  const clean = name.trim().toLowerCase();
+  const map = {
+    'delhi': 'NDLS',
+    'new delhi': 'NDLS',
+    'chandigarh': 'CDG',
+    'mumbai': 'MMCT',
+    'mumbai central': 'MMCT',
+    'bhopal': 'BPL',
+    'varanasi': 'BSB',
+    'lucknow': 'LKO',
+    'patna': 'PNBE',
+    'bangalore': 'SBC',
+    'chennai': 'MAS',
+    'pune': 'PUNE',
+    'ernakulam': 'ERS',
+    'patiala': 'PTA',
+    'nizar': 'NIZAR',
+    'ahmedabad': 'ADI'
+  };
+  return map[clean] || name.slice(0, 4).toUpperCase();
+};
+
+const formatTicketDate = (dateStr) => {
+  if (!dateStr) return 'Tomorrow';
+  try {
+    if (dateStr.toLowerCase() === 'tomorrow') {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      return tomorrow.toLocaleDateString('en-US', { day: 'numeric', month: 'short', weekday: 'long' });
+    }
+    const date = new Date(dateStr);
+    if (!isNaN(date.getTime())) {
+      const day = date.getDate();
+      const month = date.toLocaleDateString('en-US', { month: 'short' });
+      const weekday = date.toLocaleDateString('en-US', { weekday: 'long' });
+      return `${day} ${month} ${weekday}`;
+    }
+    return dateStr;
+  } catch (e) {
+    return dateStr;
+  }
+};
+
+const getClassName = (code) => {
+  const map = {
+    'SL': 'Sleeper (SL)',
+    '3A': 'AC 3 Tier (3A)',
+    '2A': 'AC 2 Tier (2A)',
+    '1A': 'AC First Class (1A)',
+    'CC': 'AC Chair Car (CC)',
+    'EC': 'Exec. Chair Car (EC)',
+    '2S': 'Second Sitting (2S)'
+  };
+  return map[code.toUpperCase()] || code;
+};
+
+const getStableTicketNo = (pnr) => {
+  if (!pnr) return 'TQC988093532';
+  let hash = 0;
+  for (let i = 0; i < pnr.length; i++) {
+    hash = pnr.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const num = Math.abs(hash % 9000000000) + 1000000000;
+  return `TQC${num}`;
+};
+
 export default function WebRTCCall({ backendUrl, onCallStateChange }) {
   const [inCall, setInCall] = useState(false)
   const [callId, setCallId] = useState(null)
@@ -56,7 +124,7 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
       }
     }
   }
-  
+
   // Clean up on unmount
   useEffect(() => {
     return () => {
@@ -87,6 +155,7 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
     setSlots({})
     setCurrentState('CONNECTING')
     setAgentSpeaking(false)
+    isListeningRef.current = false
 
     // Setup websocket
     const wsUrl = `${backendUrl.replace('http', 'ws')}/calls/ws/${uniqueId}`
@@ -99,16 +168,16 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
 
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data)
-      
+
       if (data.type === 'agent_response') {
         const text = data.text
         lastAgentSpokenTextRef.current = text
         const state = data.state
         const newSlots = data.slots
-        
+
         setCurrentState(state)
         setSlots(newSlots)
-        
+
         // Dynamically adjust SpeechRecognition language based on dialect
         if (data.dialect && recognitionRef.current) {
           if (data.dialect === 'Hindi') {
@@ -121,13 +190,21 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
           }
           console.log("Speech recognition language updated dynamically:", recognitionRef.current.lang)
         }
-        
+
         // Add to transcript list
-        setTranscript(prev => [...prev, { sender: 'agent', text, timestamp: new Date() }])
-        
+        setTranscript(prev => [...prev, {
+          sender: 'agent',
+          text,
+          timestamp: new Date(),
+          availableTrains: data.available_trains || [],
+          lastActionResult: data.last_action_result || null,
+          slots: newSlots,
+          state: state
+        }])
+
         // Callback to parent component to update dashboard
         onCallStateChange({ callId: uniqueId, state, slots: newSlots, transcriptText: text, direction: 'outbound' })
-        
+
         // Play TTS Response
         if (mockTts) {
           // Play via browser speechSynthesis
@@ -136,12 +213,11 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
           window.speechSynthesis.cancel() // clear any queue
           const utterance = new SpeechSynthesisUtterance(text)
           utterance.rate = 1.15
-          
           // Try to select Hinglish/Hindi or English voice
           const voices = window.speechSynthesis.getVoices()
           const hindiVoice = voices.find(v => v.lang.includes('hi') || v.lang.includes('in'))
           if (hindiVoice) utterance.voice = hindiVoice
-          
+
           utterance.onend = () => {
             agentSpeakingRef.current = false
             setAgentSpeaking(false)
@@ -199,6 +275,7 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
 
     // Setup Speech Recognition (STT) if in mock/browser mode
     if (mockStt) {
+      let fatalErrorOccurred = false
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
       if (SpeechRecognition) {
         const recognition = new SpeechRecognition()
@@ -206,7 +283,7 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
         recognition.continuous = false // turn off continuous to fire onend which lets us restart turn-by-turn
         recognition.interimResults = false
         recognition.lang = 'en-IN' // Start with en-IN (Indian English) which matches either English or Hindi keywords in language choice
-        
+
         recognition.onstart = () => {
           isListeningRef.current = true
           console.log("Speech recognition started")
@@ -218,7 +295,7 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
 
         recognition.onresult = (event) => {
           const resultText = event.results[0][0].transcript
-          
+
           // Check if this result is just an echo of the agent's own speech
           const textClean = resultText.trim().toLowerCase()
           const agentTextClean = (lastAgentSpokenTextRef.current || '').trim().toLowerCase()
@@ -228,30 +305,30 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
             if (agentTextClean.includes(w)) matchCount++
           })
           const overlapRatio = wordsResult.length > 0 ? matchCount / wordsResult.length : 0
-          
+
           // If the overlap is high and the phrase is substantial (e.g. >= 3 words), it's an echo loop.
           if (overlapRatio > 0.5 && wordsResult.length >= 3) {
             console.log("Echo loop detected and ignored:", resultText)
             return
           }
-          
+
           // Double check interruption on result as well using conversational fillers/interrupt words
           const words = textClean.split(/\s+/)
           const interruptWords = ["uh", "uhh", "um", "excuse", "wait", "stop", "hold on", "listen", "no", "hey", "hello", "sorry", "cancel", "bhai", "suno", "ek min", "ek minute"]
           const hasInterruptWord = interruptWords.some(w => textClean.includes(w))
           const isSignificantSpeech = words.length >= 2 || textClean.length >= 5
-          
+
           if (agentSpeakingRef.current && (hasInterruptWord || isSignificantSpeech)) {
             console.log("Barge-in: valid speech interruption detected:", resultText)
             window.speechSynthesis.cancel()
             if (activeAudioRef.current) {
-              try { activeAudioRef.current.pause() } catch(e){}
+              try { activeAudioRef.current.pause() } catch (e) { }
             }
             setAgentSpeaking(false)
           }
 
           setTranscript(prev => [...prev, { sender: 'user', text: resultText, timestamp: new Date() }])
-          
+
           // Send transcript to FastAPI socket
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
@@ -264,6 +341,10 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
 
         recognition.onend = () => {
           isListeningRef.current = false
+          if (fatalErrorOccurred) {
+            console.error("Speech recognition stopped due to a fatal error.")
+            return
+          }
           // Restart loop if still in call and agent is not speaking
           setTimeout(() => {
             if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
@@ -274,6 +355,15 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
 
         recognition.onerror = (event) => {
           console.warn("Speech recognition error:", event.error)
+          if (event.error === 'not-allowed') {
+            alert("Microphone permission denied! Please click the microphone/lock icon in your browser address bar and choose 'Allow' to let the voice agent hear you.")
+            fatalErrorOccurred = true
+          } else if (event.error === 'audio-capture') {
+            alert("No microphone detected. Please check your mic connection and try again.")
+            fatalErrorOccurred = true
+          } else if (['service-not-allowed', 'language-not-supported'].includes(event.error)) {
+            fatalErrorOccurred = true
+          }
         }
 
         // Start listening
@@ -292,23 +382,23 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 })
       audioContextRef.current = audioContext
-      
+
       const source = audioContext.createMediaStreamSource(stream)
       const processor = audioContext.createScriptProcessor(4096, 1, 1)
-      
+
       source.connect(processor)
       processor.connect(audioContext.destination)
-      
+
       processor.onaudioprocess = (e) => {
         if (isMuted || agentSpeaking || ws.readyState !== WebSocket.OPEN) return
-        
+
         const inputData = e.inputBuffer.getChannelData(0)
         // Convert to 16-bit PCM integer array
         const pcm16 = new Int16Array(inputData.length)
         for (let i = 0; i < inputData.length; i++) {
           pcm16[i] = Math.min(1, Math.max(-1, inputData[i])) * 0x7FFF
         }
-        
+
         // Base64 encode and send
         const base64Audio = b64EncodeUnicode(pcm16.buffer)
         ws.send(JSON.stringify({
@@ -334,7 +424,8 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
   const endCall = () => {
     setInCall(false)
     setCurrentState('DISCONNECTED')
-    
+    isListeningRef.current = false
+
     if (socketRef.current) {
       if (socketRef.current.readyState === WebSocket.OPEN) {
         socketRef.current.close()
@@ -344,18 +435,18 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
 
     if (recognitionRef.current) {
       recognitionRef.current.onend = null
-      try { recognitionRef.current.stop() } catch (e) {}
+      try { recognitionRef.current.stop() } catch (e) { }
       recognitionRef.current = null
     }
 
     if (audioContextRef.current) {
-      try { audioContextRef.current.close() } catch (e) {}
+      try { audioContextRef.current.close() } catch (e) { }
       audioContextRef.current = null
     }
 
     window.speechSynthesis.cancel()
     if (activeAudioRef.current) {
-      try { activeAudioRef.current.pause() } catch (e){}
+      try { activeAudioRef.current.pause() } catch (e) { }
       activeAudioRef.current = null
     }
     setAgentSpeaking(false)
@@ -365,9 +456,9 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
     setIsMuted(!isMuted)
     if (recognitionRef.current) {
       if (!isMuted) {
-        try { recognitionRef.current.stop() } catch (e) {}
+        try { recognitionRef.current.stop() } catch (e) { }
       } else {
-        try { recognitionRef.current.start() } catch (e) {}
+        try { recognitionRef.current.start() } catch (e) { }
       }
     }
   }
@@ -402,7 +493,7 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
         background: 'rgba(0, 0, 0, 0.2)',
         borderRadius: '12px',
         border: '1px solid var(--border-color)',
-        height: '220px',
+        height: '450px',
         overflowY: 'auto',
         padding: '16px',
         display: 'flex',
@@ -415,23 +506,384 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
             <p style={{ fontSize: '0.85rem' }}>No active call. Dial in below to speak to the booking agent.</p>
           </div>
         ) : (
-          transcript.map((t, idx) => (
-            <div key={idx} style={{
-              alignSelf: t.sender === 'user' ? 'flex-end' : 'flex-start',
-              maxWidth: '80%',
-              background: t.sender === 'user' ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.05)',
-              border: `1px solid ${t.sender === 'user' ? 'rgba(99, 102, 241, 0.25)' : 'var(--border-color)'}`,
-              padding: '10px 14px',
-              borderRadius: t.sender === 'user' ? '12px 12px 2px 12px' : '12px 12px 12px 2px',
-              fontSize: '0.9rem',
-              lineHeight: 1.4
-            }}>
-              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'capitalize' }}>
-                {t.sender}
+          transcript.map((t, idx) => {
+            const isUser = t.sender === 'user';
+
+            // Check if there is an execution result for booking or PNR check
+            let bookingData = null;
+            if (t.lastActionResult) {
+              if (t.lastActionResult.pnr) {
+                bookingData = t.lastActionResult;
+              } else if (t.lastActionResult.booking) {
+                bookingData = t.lastActionResult.booking;
+              }
+            }
+
+            const hasTrains = t.availableTrains && t.availableTrains.length > 0;
+
+            return (
+              <div key={idx} style={{
+                alignSelf: isUser ? 'flex-end' : 'flex-start',
+                width: '100%',
+                maxWidth: '85%',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px'
+              }}>
+                <div style={{
+                  alignSelf: isUser ? 'flex-end' : 'flex-start',
+                  background: isUser ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+                  border: `1px solid ${isUser ? 'rgba(99, 102, 241, 0.25)' : 'var(--border-color)'}`,
+                  padding: '10px 14px',
+                  borderRadius: isUser ? '12px 12px 2px 12px' : '12px 12px 12px 2px',
+                  fontSize: '0.9rem',
+                  lineHeight: 1.4,
+                  width: 'fit-content',
+                  flexShrink: 0
+                }}>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'capitalize' }}>
+                    {t.sender}
+                  </div>
+                  <div>{t.text}</div>
+                </div>
+
+                {/* 1. Beautiful ticket card rendering if booking information is available */}
+                {bookingData && (() => {
+                  const slotsSource = t.slots?.source || slots.source || 'Delhi';
+                  const slotsDestination = t.slots?.destination || slots.destination || 'Chandigarh';
+                  const slotsDate = t.slots?.date || slots.date || 'tomorrow';
+
+                  const matchedTrain = t.availableTrains?.find(train => train.no === bookingData.train_no) || {};
+                  const depTime = bookingData.dep || matchedTrain.dep || '06:00 AM';
+                  const arrTime = bookingData.arr || matchedTrain.arr || '12:00 PM';
+                  const duration = bookingData.duration || matchedTrain.duration || '06.00';
+
+                  return (
+                    <div style={{
+                      alignSelf: 'flex-start',
+                      width: '290px',
+                      borderRadius: '16px',
+                      overflow: 'hidden',
+                      flexShrink: 0,
+                      boxShadow: '0 8px 30px rgba(0, 0, 0, 0.4)',
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                      fontFamily: 'system-ui, -apple-system, sans-serif',
+                      marginBottom: '10px'
+                    }}>
+                      {/* Top Section - Blue Block */}
+                      <div style={{
+                        background: '#6366f1',
+                        padding: '16px',
+                        color: 'white',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '12px'
+                      }}>
+                        {/* Station Timeline */}
+                        <div style={{ position: 'relative', paddingLeft: '24px' }}>
+                          {/* Dotted Line */}
+                          <div style={{
+                            position: 'absolute',
+                            left: '7px',
+                            top: '12px',
+                            bottom: '12px',
+                            borderLeft: '2px dotted rgba(255, 255, 255, 0.5)'
+                          }} />
+
+                          {/* Source Station */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                            <span style={{ fontSize: '14px', position: 'relative', zIndex: 2 }}>🏢</span>
+                            <div>
+                              <div style={{ fontSize: '1.05rem', fontWeight: 'bold', lineHeight: '1.2' }}>
+                                {bookingData.src || slotsSource}
+                              </div>
+                              <div style={{ fontSize: '0.75rem', opacity: 0.8, textTransform: 'uppercase' }}>
+                                {getStationCode(bookingData.src || slotsSource)}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Destination Station */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontSize: '14px', position: 'relative', zIndex: 2 }}>🏢</span>
+                            <div>
+                              <div style={{ fontSize: '1.05rem', fontWeight: 'bold', lineHeight: '1.2' }}>
+                                {bookingData.dst || slotsDestination}
+                              </div>
+                              <div style={{ fontSize: '0.75rem', opacity: 0.8, textTransform: 'uppercase' }}>
+                                {getStationCode(bookingData.dst || slotsDestination)}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Divider */}
+                        <div style={{ height: '1px', background: 'rgba(255, 255, 255, 0.25)' }} />
+
+                        {/* Timings */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem' }}>
+                          <span style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>
+                            {depTime} - {arrTime}
+                          </span>
+                        </div>
+
+                        {/* Duration */}
+                        <div style={{ fontSize: '0.8rem', opacity: 0.9 }}>
+                          Duration: {duration}
+                        </div>
+
+                        {/* Date */}
+                        <div style={{ fontSize: '0.8rem', opacity: 0.9 }}>
+                          {formatTicketDate(bookingData.date || slotsDate)}
+                        </div>
+
+                        {/* Train Name/Number */}
+                        <div style={{ fontSize: '0.8rem', opacity: 0.9 }}>
+                          {bookingData.train_name || 'Express'} ({bookingData.train_no || '12002'})
+                        </div>
+
+                        {/* Class */}
+                        <div style={{ fontSize: '0.85rem', fontWeight: '500' }}>
+                          {getClassName(bookingData.class_code || 'CC')}
+                        </div>
+                      </div>
+
+                      {/* Bottom Section - White Block */}
+                      <div style={{
+                        background: '#ffffff',
+                        padding: '16px',
+                        color: '#1f2937',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '8px',
+                        fontSize: '0.85rem'
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ color: '#4b5563' }}>Seat No</span>
+                          <strong style={{ color: '#111827' }}>
+                            {bookingData.coach || 'B1'} - {bookingData.berth || '14'} ({bookingData.status || 'CNF'})
+                          </strong>
+                        </div>
+
+                        <div style={{ borderTop: '1px dashed #d1d5db', margin: '4px 0' }} />
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ color: '#4b5563' }}>Ticket No</span>
+                          <strong style={{ color: '#111827' }}>{getStableTicketNo(bookingData.pnr)}</strong>
+                        </div>
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ color: '#4b5563' }}>PNR</span>
+                          <strong style={{ color: '#1d4ed8' }}>{bookingData.pnr || 'G45325329'}</strong>
+                        </div>
+
+                        <div style={{ borderTop: '1px dashed #d1d5db', margin: '4px 0' }} />
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '4px' }}>
+                          <span style={{ color: '#111827', fontWeight: 'bold' }}>Fare</span>
+                          <strong style={{ fontSize: '1.05rem', color: '#111827' }}>
+                            ₹ {parseFloat(bookingData.price || 850).toFixed(2)}
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* 2. Available trains list card rendering */}
+                {hasTrains && (
+                  <div style={{
+                    alignSelf: 'flex-start',
+                    width: '100%',
+                    display: 'flex',
+                    flexDirection: 'row',
+                    gap: '16px',
+                    overflowX: 'auto',
+                    overflowY: 'hidden',
+                    padding: '8px 4px',
+                    borderRadius: '8px',
+                    marginBottom: '10px',
+                    flexShrink: 0
+                  }}>
+                    {t.availableTrains.flatMap((train) => {
+                      const classes = Object.entries(train.class_details || {});
+                      if (classes.length === 0) {
+                        return [{ train, classCode: 'CC', classInfo: { seats: 0, status: 'UNKNOWN', price: 0 } }];
+                      }
+                      return classes.map(([classCode, classInfo]) => ({
+                        train,
+                        classCode,
+                        classInfo
+                      }));
+                    }).slice(0, 4).map(({ train, classCode, classInfo }, idx) => {
+                      const slotsSource = t.slots?.source || slots.source || 'Delhi';
+                      const slotsDestination = t.slots?.destination || slots.destination || 'Chandigarh';
+                      const slotsDate = t.slots?.date || slots.date || 'tomorrow';
+
+                      const depTime = train.dep || '06:00 AM';
+                      const arrTime = train.arr || '12:00 PM';
+                      const duration = train.duration || '06.00';
+
+                      return (
+                        <div key={idx} 
+                          onClick={() => {
+                            if (inCall && socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+                              const choiceText = `Choose train ${train.no} class ${classCode}`;
+                              window.speechSynthesis.cancel();
+                              if (activeAudioRef.current) {
+                                try { activeAudioRef.current.pause() } catch(e){}
+                              }
+                              setAgentSpeaking(false);
+                              
+                              setTranscript(prev => [...prev, { 
+                                sender: 'user', 
+                                text: `Selected: ${train.name} (${train.no}) - ${getClassName(classCode)}`, 
+                                timestamp: new Date() 
+                              }]);
+                              
+                              socketRef.current.send(JSON.stringify({
+                                type: 'user_transcript',
+                                text: choiceText
+                              }));
+                            }
+                          }}
+                          className="clickable-card"
+                          style={{
+                            width: '290px',
+                            minWidth: '290px',
+                            borderRadius: '16px',
+                            overflow: 'hidden',
+                            boxShadow: '0 8px 30px rgba(0, 0, 0, 0.4)',
+                            border: '1px solid rgba(255, 255, 255, 0.08)',
+                            fontFamily: 'system-ui, -apple-system, sans-serif',
+                            background: '#ffffff',
+                            flexShrink: 0,
+                            cursor: 'pointer'
+                          }}>
+                          {/* Top Section - Blue Block */}
+                          <div style={{
+                            background: '#6366f1',
+                            padding: '16px',
+                            color: 'white',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '12px'
+                          }}>
+                            {/* Station Timeline */}
+                            <div style={{ position: 'relative', paddingLeft: '24px' }}>
+                              {/* Dotted Line */}
+                              <div style={{
+                                position: 'absolute',
+                                left: '7px',
+                                top: '12px',
+                                bottom: '12px',
+                                borderLeft: '2px dotted rgba(255, 255, 255, 0.5)'
+                              }} />
+
+                              {/* Source Station */}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                                <span style={{ fontSize: '14px', position: 'relative', zIndex: 2 }}>🏢</span>
+                                <div>
+                                  <div style={{ fontSize: '1.05rem', fontWeight: 'bold', lineHeight: '1.2' }}>
+                                    {train.src || slotsSource}
+                                  </div>
+                                  <div style={{ fontSize: '0.75rem', opacity: 0.8, textTransform: 'uppercase' }}>
+                                    {getStationCode(train.src || slotsSource)}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Destination Station */}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{ fontSize: '14px', position: 'relative', zIndex: 2 }}>🏢</span>
+                                <div>
+                                  <div style={{ fontSize: '1.05rem', fontWeight: 'bold', lineHeight: '1.2' }}>
+                                    {train.dst || slotsDestination}
+                                  </div>
+                                  <div style={{ fontSize: '0.75rem', opacity: 0.8, textTransform: 'uppercase' }}>
+                                    {getStationCode(train.dst || slotsDestination)}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Divider */}
+                            <div style={{ height: '1px', background: 'rgba(255, 255, 255, 0.25)' }} />
+
+                            {/* Timings */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem' }}>
+                              <span style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>
+                                {depTime} - {arrTime}
+                              </span>
+                            </div>
+
+                            {/* Duration */}
+                            <div style={{ fontSize: '0.8rem', opacity: 0.9 }}>
+                              Duration: {duration}
+                            </div>
+
+                            {/* Date */}
+                            <div style={{ fontSize: '0.8rem', opacity: 0.9 }}>
+                              {formatTicketDate(slotsDate)}
+                            </div>
+
+                            {/* Train Operator */}
+                            <div style={{ fontSize: '0.8rem', opacity: 0.9 }}>
+                              {train.name || 'Express'} ({train.no || '12002'})
+                            </div>
+
+                            {/* Class */}
+                            <div style={{ fontSize: '0.85rem', fontWeight: '500' }}>
+                              {getClassName(classCode)}
+                            </div>
+                          </div>
+
+                          {/* Bottom Section - White Block */}
+                          <div style={{
+                            background: '#ffffff',
+                            padding: '16px',
+                            color: '#1f2937',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '8px',
+                            fontSize: '0.85rem'
+                          }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ color: '#4b5563' }}>Seat Status</span>
+                              <strong style={{ color: classInfo.seats > 0 ? '#10b981' : '#ef4444' }}>
+                                {classInfo.status || 'AVAILABLE'} ({classInfo.seats || 0})
+                              </strong>
+                            </div>
+
+                            <div style={{ borderTop: '1px dashed #d1d5db', margin: '4px 0' }} />
+
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ color: '#4b5563' }}>Train No</span>
+                              <strong style={{ color: '#111827' }}>{train.no}</strong>
+                            </div>
+
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ color: '#4b5563' }}>PNR Status</span>
+                              <strong style={{ color: '#1d4ed8' }}>SEARCH-ACTIVE</strong>
+                            </div>
+
+                            <div style={{ borderTop: '1px dashed #d1d5db', margin: '4px 0' }} />
+
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '4px' }}>
+                              <span style={{ color: '#111827', fontWeight: 'bold' }}>Fare</span>
+                              <strong style={{ fontSize: '1.05rem', color: '#111827' }}>
+                                ₹ {parseFloat(classInfo.price || 0).toFixed(2)}
+                              </strong>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-              <div>{t.text}</div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
@@ -483,7 +935,7 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
             >
               {isMuted ? <MicOff size={20} /> : <Mic size={20} />}
             </button>
-            
+
             <button
               onClick={endCall}
               style={{

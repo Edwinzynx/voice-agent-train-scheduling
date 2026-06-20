@@ -14,55 +14,89 @@ router = APIRouter(
     tags=["eval"]
 )
 
-# Hardcoded default eval dataset in case file isn't loaded yet
+from pathlib import Path
+
+# Hardcoded default eval dataset fallback
 DEFAULT_EVAL_DATASET = [
     {
-        "id": "tc-1",
-        "description": "Direct train search flow",
+        "id": "scenario-1-search",
+        "description": "Standard train search from Delhi to Varanasi in English",
         "turns": [
-            "Hi, I want to find a train from Delhi to Mumbai tomorrow.",
-            "Yes, that's correct."
+            "Hello, I want to find trains.",
+            "From Delhi",
+            "To Varanasi",
+            "For tomorrow please",
+            "Yes, that's correct.",
+            "No, thank you."
         ],
         "expected_intent": "FIND_TRAINS",
-        "expected_slots": {"source": "Delhi", "destination": "Mumbai", "date": "2026-06-19"}
+        "expected_slots": {
+            "source": "Delhi",
+            "destination": "Varanasi",
+            "date": "2026-06-19"
+        }
     },
     {
-        "id": "tc-2",
-        "description": "Stateful ticket booking flow in Hinglish",
+        "id": "scenario-2-book-hinglish",
+        "description": "Stateful ticket booking in Hinglish with passenger details",
         "turns": [
-            "Mera ticket book kar do please.",
-            "Delhi se",
-            "Mumbai jana hai",
+            "Bhai ek ticket book karni hai.",
+            "Delhi se Bhopal",
             "Kal chalna hai",
-            "Sleeper class batayein",
-            "Yatri ka naam Edwin hai",
-            "Haan, booking confirm kar do."
+            "Sleeper coach chahiye",
+            "Yatri ka naam hai Amit",
+            "Haan ticket confirm kar do",
+            "Nahi, bas, thank you."
         ],
         "expected_intent": "BOOK_TICKET",
-        "expected_slots": {"source": "Delhi", "destination": "Mumbai", "date": "2026-06-19", "class_code": "SL", "passenger_name": "Edwin"}
+        "expected_slots": {
+            "source": "Delhi",
+            "destination": "Bhopal",
+            "date": "2026-06-19",
+            "class_code": "SL",
+            "passenger_name": "Amit"
+        }
     },
     {
-        "id": "tc-3",
-        "description": "PNR status check flow",
+        "id": "scenario-3-status",
+        "description": "PNR status check for existing booking",
         "turns": [
-            "Check my PNR 4829384729 please.",
-            "Yes"
+            "Mujhe PNR status check karna hai",
+            "PNR number hai 4829384729",
+            "Yes",
+            "No, that is all."
         ],
         "expected_intent": "GET_PNR_STATUS",
-        "expected_slots": {"pnr_number": "4829384729"}
+        "expected_slots": {
+            "pnr_number": "4829384729"
+        }
     },
     {
-        "id": "tc-4",
+        "id": "scenario-4-cancel-hindi",
         "description": "Ticket cancellation in Hindi",
         "turns": [
-            "Mujhe ticket cancel karni hai.",
-            "PNR number hai 4829384729",
-            "Haan cancel kar do."
+            "Mera ticket cancel kar do.",
+            "Das digit number hai 4829384729",
+            "Haan cancel kar dijiye",
+            "No, thanks."
         ],
         "expected_intent": "CANCEL_TICKET",
-        "expected_slots": {"pnr_number": "4829384729"}
+        "expected_slots": {
+            "pnr_number": "4829384729"
+        }
     }
 ]
+
+def load_eval_dataset():
+    eval_dir = Path(__file__).resolve().parent.parent.parent.parent / "eval"
+    dataset_file = eval_dir / "dataset.json"
+    if dataset_file.exists():
+        try:
+            with open(dataset_file, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Error loading eval dataset from file: {e}")
+    return DEFAULT_EVAL_DATASET
 
 async def run_evaluation_task(run_id: str, db_session_creator):
     """
@@ -75,14 +109,15 @@ async def run_evaluation_task(run_id: str, db_session_creator):
         if not eval_run_rec:
             return
             
+        dataset = load_eval_dataset()
         results = []
-        total_cases = len(DEFAULT_EVAL_DATASET)
+        total_cases = len(dataset)
         completed_cases = 0
         successes = 0
         slot_accuracies = []
         all_latencies = []
         
-        for case in DEFAULT_EVAL_DATASET:
+        for case in dataset:
             coordinator = FSMCoordinator()
             case_id = f"eval-sim-{uuid.uuid4().hex[:6]}"
             session = coordinator.get_or_create_session(case_id)
@@ -100,8 +135,12 @@ async def run_evaluation_task(run_id: str, db_session_creator):
                 elapsed_ms = (time.time() - start_time) * 1000
                 case_latencies.append(elapsed_ms)
                 all_latencies.append(elapsed_ms)
-                # Sleep briefly to mimic network
-                await asyncio.sleep(0.01)
+                # Sleep to stay under Groq's 6000 TPM limit
+                from ..config import config_manager
+                if not config_manager.settings.use_mock_llm:
+                    await asyncio.sleep(8.0)
+                else:
+                    await asyncio.sleep(0.01)
                 
             # Verify results
             final_session = coordinator.sessions[case_id]
@@ -212,6 +251,6 @@ def get_eval_runs(db: Session = Depends(get_db)):
             "p50_latency": run.p50_latency,
             "p90_latency": run.p90_latency,
             "p99_latency": run.p99_latency,
-            "results": json.loads(run.raw_results)
+            "results": json.loads(run.raw_results) if run.raw_results else []
         })
     return parsed_runs

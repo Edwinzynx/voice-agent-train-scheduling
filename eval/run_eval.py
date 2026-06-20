@@ -80,7 +80,9 @@ def run_eval(mode=None):
             elapsed_ms = (time.time() - start_time) * 1000
             case_latencies.append(elapsed_ms)
             all_latencies.append(elapsed_ms)
-            
+            # Sleep to respect Groq's 6000 TPM limit in real mode
+            if not config_manager.settings.use_mock_llm:
+                time.sleep(8.0)
         final_session = coordinator.sessions[case_id]
         
         # Evaluate intent

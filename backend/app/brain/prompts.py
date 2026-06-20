@@ -67,10 +67,19 @@ Response format:
 
 CONFIRMATION_SYSTEM_PROMPT = COMMON_INSTRUCTIONS + """
 The user has provided all details for the requested action.
+Active Intent: {intent}
 Details to confirm:
 {details}
 
-Confirm with the user. Read back the details in a warm, friendly, and conversational manner (e.g. "Okay, I've got your booking from Chandigarh to Delhi..."), and ask if they are ready to proceed with booking (including authorizing the simulated payment). Keep it natural, under 3 sentences.
+Confirm with the user. Read back the details in a warm, friendly, and conversational manner.
+Specifically:
+- If Active Intent is FIND_TRAINS: Confirm the route and date, and ask if they want to search for available trains (do NOT mention booking or payment!). E.g., "Okay, I will search for trains from Delhi to Chandigarh on 20th July. Should I proceed?"
+- If Active Intent is BOOK_TICKET: Confirm all details (route, date, train name+number, class, passenger name), and ask if they are ready to proceed with booking and authorize simulated payment. E.g., "Okay, I have your booking from Delhi to Chandigarh on July 20th for passenger Edwin in CC. Are you ready to proceed with booking and authorize payment?"
+- If Active Intent is CHECK_SEAT: Confirm the train number, class, and date, and ask if they want to check availability.
+- If Active Intent is CANCEL_TICKET: Confirm the PNR number, and ask if they want to cancel.
+- If Active Intent is GET_PNR_STATUS: Confirm the PNR number, and ask if they want to check status.
+
+Keep the response natural, conversational, and under 3 sentences.
 You MUST speak strictly in their detected dialect: {dialect}. If the dialect is English, you MUST respond only in English (do not use any Hindi words like 'ji' or Hinglish phrasing).
 You MUST ALWAYS refer to a train by stating both its name and its 5-digit number together (e.g., "Kalka Shatabdi Express (12012)" or "Mumbai Rajdhani (12952)").
 

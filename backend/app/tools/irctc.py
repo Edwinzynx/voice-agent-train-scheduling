@@ -1,7 +1,6 @@
 import random
 from datetime import datetime
 import httpx
-from ..config import config_manager
 
 # In-memory database of bookings to allow stateful search/cancel during a session.
 # Keys are PNRs (10-digit strings).
@@ -22,19 +21,10 @@ BOOKINGS_DB = {
     }
 }
 
-# Standard mock trains
-MOCK_TRAINS = [
-    {"no": "12626", "name": "Kerala Express", "src": "Delhi", "dst": "Mumbai", "dep": "20:10", "arr": "14:20", "duration": "18h 10m", "classes": ["1A", "2A", "3A", "SL"]},
-    {"no": "12952", "name": "Mumbai Rajdhani", "src": "Delhi", "dst": "Mumbai", "dep": "16:55", "arr": "08:35", "duration": "15h 40m", "classes": ["1A", "2A", "3A"]},
-    {"no": "12002", "name": "Shatabdi Express", "src": "Delhi", "dst": "Bhopal", "dep": "06:00", "arr": "14:40", "duration": "8h 40m", "classes": ["CC", "EC"]},
-    {"no": "22436", "name": "Vande Bharat Express", "src": "Delhi", "dst": "Varanasi", "dep": "06:00", "arr": "14:00", "duration": "8h 00m", "classes": ["CC", "EC"]},
-    {"no": "12926", "name": "Paschim Express", "src": "Delhi", "dst": "Mumbai", "dep": "16:30", "arr": "14:55", "duration": "22h 25m", "classes": ["1A", "2A", "3A", "SL"]},
-    {"no": "12012", "name": "Kalka Shatabdi Express", "src": "Chandigarh", "dst": "Delhi", "dep": "06:15", "arr": "09:50", "duration": "3h 35m", "classes": ["CC", "EC"]}
-]
-
 STATION_CODE_MAP = {
     "delhi": "NDLS",
     "new delhi": "NDLS",
+    "old delhi": "DLI",
     "chandigarh": "CDG",
     "mumbai": "MMCT",
     "mumbai central": "MMCT",
@@ -45,231 +35,249 @@ STATION_CODE_MAP = {
     "bangalore": "SBC",
     "chennai": "MAS",
     "pune": "PUNE",
-    "ernakulam": "ERS"
+    "ernakulam": "ERS",
+    "patiala": "PTA",
+    "kolkata": "HWH",
+    "howrah": "HWH",
+    "sealdah": "SDAH",
+    "jaipur": "JP",
+    "amritsar": "ASR",
+    "agra": "AGC",
+    "hyderabad": "HYB",
+    "secunderabad": "SC",
+    "ahmedabad": "ADI",
+    "ludhiana": "LDH",
+    "jalandhar": "JUC",
+    "ambala": "UMB",
+    "delhi cantt": "DEC",
+    "hazrat nizamuddin": "NZM",
+    "anand vihar": "ANVT",
+    "guwahati": "GHY",
+    "kanpur": "CNB",
+    "nagpur": "NGP",
+    "coimbatore": "CBE",
+    "madurai": "MDU"
 }
 
 def resolve_station_code(station_name: str) -> str:
     """
-    Resolves station name to IRCTC station code. Uses local map first, with a RapidAPI search fallback.
+    Resolves station name to IRCTC station code using static map fallback.
     """
     if not station_name:
         return "NDLS"
+        
     name_clean = station_name.strip().lower()
     if name_clean in STATION_CODE_MAP:
         return STATION_CODE_MAP[name_clean]
-    
-    settings = config_manager.settings
-    if settings.use_real_irctc_api and settings.rapidapi_key:
-        try:
-            headers = {
-                "x-rapidapi-key": settings.rapidapi_key,
-                "x-rapidapi-host": settings.rapidapi_host or "irctc1.p.rapidapi.com"
-            }
-            url = f"https://{headers['x-rapidapi-host']}/api/v1/searchStation"
-            r = httpx.get(url, headers=headers, params={"query": station_name}, timeout=5.0)
-            if r.status_code == 200:
-                data = r.json()
-                stations = data.get("data", [])
-                if stations:
-                    return stations[0].get("code", station_name[:3].upper())
-        except Exception as e:
-            print(f"Error resolving station code from RapidAPI: {e}")
-            
+        
     return station_name[:3].upper()
+
+def format_date_for_api(date_str: str) -> str:
+    """
+    Converts date string (e.g., '2026-06-20' or '20-06-2026') to ConfirmTkt API format 'DD-MM-YYYY'.
+    If parsing fails or date is empty, defaults to today's date.
+    """
+    if not date_str:
+        return datetime.now().strftime("%d-%m-%Y")
+    
+    # Try DD-MM-YYYY, YYYY-MM-DD, and slash variants
+    for fmt in ("%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d"):
+        try:
+            dt = datetime.strptime(date_str.strip(), fmt)
+            return dt.strftime("%d-%m-%Y")
+        except ValueError:
+            continue
+            
+    # Fallback to today if not parseable
+    return datetime.now().strftime("%d-%m-%Y")
 
 def find_trains(src: str, dst: str, date: str) -> dict:
     """
-    Search trains between src and dst. Connects to RapidAPI if configured.
+    Search trains between src and dst using ConfirmTkt's API.
     """
-    settings = config_manager.settings
-    if settings.use_real_irctc_api and settings.rapidapi_key:
-        try:
-            src_code = resolve_station_code(src)
-            dst_code = resolve_station_code(dst)
-            headers = {
-                "x-rapidapi-key": settings.rapidapi_key,
-                "x-rapidapi-host": settings.rapidapi_host or "irctc1.p.rapidapi.com"
-            }
-            # Check endpoint style (some versions of the API use trainBetweenStations, others trainBetweenStationsV3, etc.)
-            # We will use /api/v3/trainBetweenStations as it's the standard for irctc1
-            url = f"https://{headers['x-rapidapi-host']}/api/v3/trainBetweenStations"
-            params = {"fromStationCode": src_code, "toStationCode": dst_code}
-            r = httpx.get(url, headers=headers, params=params, timeout=8.0)
-            if r.status_code == 200:
-                data = r.json()
-                trains = data.get("data", [])
-                mapped_trains = []
-                for t in trains:
-                    mapped_trains.append({
-                        "no": t.get("train_number") or t.get("train_no") or "12002",
-                        "name": t.get("train_name") or "Express",
-                        "src": t.get("from_station_name") or src,
-                        "dst": t.get("to_station_name") or dst,
-                        "dep": t.get("dep_time") or "06:00",
-                        "arr": t.get("arr_time") or "12:00",
-                        "duration": t.get("duration") or "6h 00m",
-                        "classes": t.get("classes") or ["CC", "EC", "3A", "SL"]
-                    })
-                if mapped_trains:
-                    return {
-                        "success": True,
-                        "trains": mapped_trains,
-                        "src": src,
-                        "dst": dst,
-                        "date": date
-                    }
-        except Exception as e:
-            print(f"Error calling real train search API: {e}")
-            
-    # Mock fallback
-    src_clean = src.strip().lower()
-    dst_clean = dst.strip().lower()
-    
-    # Simple station mapping to make mock responses feel real
-    matching = []
-    for train in MOCK_TRAINS:
-        t_src = train["src"].lower()
-        t_dst = train["dst"].lower()
+    try:
+        src_code = resolve_station_code(src)
+        dst_code = resolve_station_code(dst)
+        api_date = format_date_for_api(date)
         
-        # Approximate matching
-        if (src_clean in t_src or t_src in src_clean) and (dst_clean in t_dst or t_dst in dst_clean):
-            matching.append(train)
+        url = "https://cttrainsapi.confirmtkt.com/api/v1/trains/search"
+        params = {
+            "sourceStationCode": src_code,
+            "destinationStationCode": dst_code,
+            "dateOfJourney": api_date
+        }
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Origin": "https://www.confirmtkt.com",
+            "Referer": "https://www.confirmtkt.com/"
+        }
+        
+        r = httpx.get(url, params=params, headers=headers, timeout=10.0)
+        
+        if r.status_code == 200:
+            data = r.json()
+            actual_data = data.get("data", {})
+            trains = actual_data.get("trainList", []) if isinstance(actual_data, dict) else []
             
-    # If no direct match, return a couple of random ones renamed to look matching
-    if not matching:
-        for i, train in enumerate(MOCK_TRAINS[:2]):
-            matching.append({
-                "no": f"{10000 + random.randint(1000, 9999)}",
-                "name": f"{src.title()} - {dst.title()} Express",
-                "src": src.title(),
-                "dst": dst.title(),
-                "dep": train["dep"],
-                "arr": train["arr"],
-                "duration": train["duration"],
-                "classes": train["classes"]
-            })
+            mapped_trains = []
+            for t in trains:
+                duration_mins = t.get("duration", 360)
+                try:
+                    mins = int(duration_mins)
+                    hours = mins // 60
+                    remaining_mins = mins % 60
+                    duration_str = f"{hours}h {remaining_mins:02d}m"
+                except:
+                    duration_str = "6h 00m"
+                    
+                mapped_trains.append({
+                    "no": t.get("trainNumber") or t.get("trainNo") or "12002",
+                    "name": t.get("trainName") or "Express",
+                    "src": t.get("fromStnName") or src,
+                    "dst": t.get("toStnName") or dst,
+                    "dep": t.get("departureTime") or "06:00",
+                    "arr": t.get("arrivalTime") or "12:00",
+                    "duration": duration_str,
+                    "classes": t.get("avlClasses") or ["CC", "EC", "3A", "SL"],
+                    "raw_train_data": t
+                })
             
-    return {
-        "success": True,
-        "trains": matching,
-        "src": src,
-        "dst": dst,
-        "date": date
-    }
+            if mapped_trains:
+                return {
+                    "success": True,
+                    "trains": mapped_trains,
+                    "src": src,
+                    "dst": dst,
+                    "date": date
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"No trains found between {src} ({src_code}) and {dst} ({dst_code}) from the ConfirmTkt API."
+                }
+        else:
+            return {
+                "success": False,
+                "error": f"Train API Error (Status {r.status_code}): {r.text}"
+            }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Exception calling Train API: {str(e)}"
+        }
 
-def check_seat_availability(train_no: str, date: str, class_code: str, quota: str = "GN", src: str = None, dst: str = None) -> dict:
+def check_seat_availability(train_no: str, date: str, class_code: str, quota: str = "GN", src: str = None, dst: str = None, train_data: dict = None) -> dict:
     """
-    Check seat availability for a given train, class, and quota. Connects to RapidAPI if configured.
+    Check seat availability for a given train, class, and quota using ConfirmTkt's API.
+    If train_data is provided, checks availability directly from the in-memory train search dictionary.
     """
-    settings = config_manager.settings
-    if settings.use_real_irctc_api and settings.rapidapi_key:
-        try:
+    try:
+        if train_data:
+            target_train = train_data
+        else:
             src_code = resolve_station_code(src) if src else "NDLS"
             dst_code = resolve_station_code(dst) if dst else "CDG"
-            headers = {
-                "x-rapidapi-key": settings.rapidapi_key,
-                "x-rapidapi-host": settings.rapidapi_host or "irctc1.p.rapidapi.com"
-            }
-            url = f"https://{headers['x-rapidapi-host']}/api/v1/checkSeatAvailability"
-            params = {
-                "classType": class_code,
-                "fromStationCode": src_code,
-                "quota": quota,
-                "toStationCode": dst_code,
-                "trainNo": train_no,
-                "date": date
-            }
-            r = httpx.get(url, headers=headers, params=params, timeout=8.0)
-            if r.status_code == 200:
-                res_data = r.json()
-                data_list = res_data.get("data", [])
-                if isinstance(data_list, list) and len(data_list) > 0:
-                    avail = data_list[0]
-                    # Parse status and price
-                    status_str = avail.get("current_status") or avail.get("status") or "AVAILABLE"
-                    # Ex: "AVAILABLE-0012" -> seats_available = 12
-                    seats = 0
-                    if "AVAILABLE" in status_str:
-                        parts = status_str.split("-")
-                        if len(parts) > 1 and parts[1].isdigit():
-                            seats = int(parts[1])
-                        else:
-                            seats = 15 # fallback
-                    elif "WL" in status_str:
-                        seats = 0
-                    
-                    price_str = avail.get("ticket_price") or avail.get("price") or "850"
-                    price = 850.0
-                    try:
-                        price = float(price_str)
-                    except:
-                        pass
-                        
-                    return {
-                        "success": True,
-                        "train_no": train_no,
-                        "train_name": res_data.get("train_name") or "Express Train",
-                        "date": date,
-                        "class_code": class_code,
-                        "quota": quota,
-                        "seats_available": seats,
-                        "status": status_str,
-                        "price": price
-                    }
-        except Exception as e:
-            print(f"Error checking live seat availability: {e}")
-
-    # Find train or assume default
-    train_name = "Express Train"
-    for train in MOCK_TRAINS:
-        if train["no"] == train_no:
-            train_name = train["name"]
-            break
+            api_date = format_date_for_api(date)
             
-    # Deterministic but mock-random seats based on train_no and date
-    seed = sum(ord(c) for c in (train_no + date + class_code))
-    random.seed(seed)
-    
-    seats = random.randint(0, 45)
-    wl_seats = random.randint(1, 10)
-    
-    price = 350.0
-    if class_code == "1A":
-        price = 2800.0
-        seats = random.randint(0, 5)
-    elif class_code == "2A":
-        price = 1650.0
-        seats = random.randint(0, 12)
-    elif class_code == "3A":
-        price = 1180.0
-        seats = random.randint(2, 25)
-    elif class_code == "CC":
-        price = 850.0
-        seats = random.randint(1, 30)
-    elif class_code == "EC":
-        price = 1800.0
-        seats = random.randint(0, 8)
-    elif class_code == "SL":
-        price = 450.0
-        seats = random.randint(0, 80)
+            url = "https://cttrainsapi.confirmtkt.com/api/v1/trains/search"
+            params = {
+                "sourceStationCode": src_code,
+                "destinationStationCode": dst_code,
+                "dateOfJourney": api_date
+            }
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "application/json, text/plain, */*",
+                "Origin": "https://www.confirmtkt.com",
+                "Referer": "https://www.confirmtkt.com/"
+            }
+            
+            r = httpx.get(url, params=params, headers=headers, timeout=10.0)
+            
+            if r.status_code == 200:
+                data = r.json()
+                actual_data = data.get("data", {})
+                train_list = actual_data.get("trainList", []) if isinstance(actual_data, dict) else []
+                
+                # Find train matching train_no
+                target_train = None
+                train_no_str = str(train_no).strip()
+                for t in train_list:
+                    t_no = str(t.get("trainNumber") or t.get("trainNo")).strip()
+                    if t_no == train_no_str:
+                        target_train = t
+                        break
+                        
+                if not target_train:
+                    return {
+                        "success": False,
+                        "error": f"Train {train_no} not found in search results between {src_code} and {dst_code} on {api_date}."
+                    }
+            else:
+                return {
+                    "success": False,
+                    "error": f"Live Seat Availability API Error (Status {r.status_code}): {r.text}"
+                }
+                
+        # Quota logic
+        cache_name = "availabilityCacheTatkal" if quota in ("TQ", "TATKAL") else "availabilityCache"
+        avail_cache = target_train.get(cache_name, {})
         
-    status = "AVAILABLE" if seats > 0 else f"WL{wl_seats}"
-    
-    return {
-        "success": True,
-        "train_no": train_no,
-        "train_name": train_name,
-        "date": date,
-        "class_code": class_code,
-        "quota": quota,
-        "seats_available": seats,
-        "status": status,
-        "price": price
-    }
+        avail_info = avail_cache.get(class_code)
+        if not avail_info:
+            # Try fallback matching case-insensitive
+            for k, v in avail_cache.items():
+                if k.upper() == class_code.upper():
+                    avail_info = v
+                    break
+                    
+        if not avail_info:
+            return {
+                "success": False,
+                "error": f"Class {class_code} details not available for train {train_no} under quota {quota}."
+            }
+            
+        status_str = avail_info.get("availabilityDisplayName") or avail_info.get("availability") or "AVAILABLE"
+        price_str = avail_info.get("fare") or "850"
+        
+        seats = 0
+        if "AVAILABLE" in status_str.upper():
+            parts = status_str.replace("-", " ").split()
+            digits = [int(s) for s in parts if s.isdigit()]
+            if digits:
+                seats = digits[0]
+            else:
+                seats = 15
+        elif "WL" in status_str.upper() or "RAC" in status_str.upper():
+            seats = 0
+            
+        price = 850.0
+        try:
+            price = float(price_str)
+        except:
+            pass
+            
+        return {
+            "success": True,
+            "train_no": train_no,
+            "train_name": target_train.get("trainName") or "Express Train",
+            "date": date,
+            "class_code": class_code,
+            "quota": quota,
+            "seats_available": seats,
+            "status": status_str,
+            "price": price
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Exception checking live seat availability: {str(e)}"
+        }
 
 def book_ticket(train_no: str, date: str, class_code: str, passengers: list, payment_confirmed: bool = False, src: str = "Delhi", dst: str = "Mumbai") -> dict:
     """
-    Book a ticket and return PNR.
+    Book a ticket and return PNR. Real-time train info is fetched from the ConfirmTkt API.
     """
     if not payment_confirmed:
         return {
@@ -277,30 +285,31 @@ def book_ticket(train_no: str, date: str, class_code: str, passengers: list, pay
             "error": "Payment confirmation required."
         }
         
-    # Generate random 10-digit PNR
-    pnr = "".join([str(random.randint(0, 9)) for _ in range(10)])
-    
-    train_name = "Express Train"
-    for train in MOCK_TRAINS:
-        if train["no"] == train_no:
-            train_name = train["name"]
-            break
-            
-    # Calculate price
     availability = check_seat_availability(train_no, date, class_code, src=src, dst=dst)
-    price_per_passenger = availability["price"]
+    if not availability.get("success"):
+        return {
+            "success": False,
+            "error": f"Could not verify live train details: {availability.get('error', 'Unknown live API error')}"
+        }
+        
+    # Generate random 10-digit PNR for booking simulation
+    pnr = "".join([str(random.randint(0, 9)) for _ in range(10)])
+    train_name = availability.get("train_name") or "Express Train"
+    price_per_passenger = availability.get("price") or 850.0
+    status = availability.get("status") or "CNF"
+    
     total_price = price_per_passenger * len(passengers)
     
     booking = {
         "pnr": pnr,
         "train_no": train_no,
         "train_name": train_name,
-        "src": src,
-        "dst": dst,
+        "src": src.title(),
+        "dst": dst.title(),
         "date": date,
         "class_code": class_code,
         "passengers": passengers,
-        "status": "CNF" if availability["seats_available"] > 0 else "WL",
+        "status": status,
         "coach": f"S{random.randint(1, 6)}" if class_code == "SL" else f"B{random.randint(1, 3)}" if class_code == "3A" else f"A{random.randint(1, 2)}",
         "berth": str(random.randint(1, 64)),
         "price": total_price
@@ -340,51 +349,8 @@ def cancel_ticket(pnr: str) -> dict:
 
 def get_pnr_status(pnr: str) -> dict:
     """
-    Fetch PNR status. Connects to RapidAPI if configured.
+    Fetch PNR status.
     """
-    settings = config_manager.settings
-    if settings.use_real_irctc_api and settings.rapidapi_key:
-        try:
-            headers = {
-                "x-rapidapi-key": settings.rapidapi_key,
-                "x-rapidapi-host": settings.rapidapi_host or "irctc1.p.rapidapi.com"
-            }
-            url = f"https://{headers['x-rapidapi-host']}/api/v3/getPNRStatus"
-            params = {"pnrNumber": pnr}
-            r = httpx.get(url, headers=headers, params=params, timeout=8.0)
-            if r.status_code == 200:
-                res_data = r.json()
-                pnr_data = res_data.get("data", {})
-                if pnr_data:
-                    booking = {
-                        "pnr": pnr_data.get("pnr") or pnr,
-                        "train_no": pnr_data.get("trainNo") or pnr_data.get("train_number") or "12002",
-                        "train_name": pnr_data.get("trainName") or pnr_data.get("train_name") or "Express Train",
-                        "src": pnr_data.get("source") or pnr_data.get("from_station_name") or "Delhi",
-                        "dst": pnr_data.get("destination") or pnr_data.get("to_station_name") or "Mumbai",
-                        "date": pnr_data.get("date") or pnr_data.get("journey_date") or "2026-06-25",
-                        "class_code": pnr_data.get("class") or pnr_data.get("class_code") or "3A",
-                        "passengers": [
-                            {
-                                "name": p.get("name") or p.get("passenger_name") or f"Passenger {i+1}",
-                                "age": p.get("age") or 30,
-                                "gender": p.get("gender") or "M"
-                            }
-                            for i, p in enumerate(pnr_data.get("passengers", []))
-                        ],
-                        "status": pnr_data.get("status") or pnr_data.get("booking_status") or "CNF",
-                        "coach": pnr_data.get("coach") or "B1",
-                        "berth": pnr_data.get("berth") or pnr_data.get("seat") or "14",
-                        "price": float(pnr_data.get("price") or 1450.0)
-                    }
-                    BOOKINGS_DB[pnr] = booking
-                    return {
-                        "success": True,
-                        "booking": booking
-                    }
-        except Exception as e:
-            print(f"Error calling real getPNRStatus API: {e}")
-
     if pnr in BOOKINGS_DB:
         return {
             "success": True,
@@ -399,25 +365,12 @@ def get_live_train_info(train_no: str) -> dict:
     """
     Get live running status for a train.
     """
-    train_name = "Express Train"
-    for train in MOCK_TRAINS:
-        if train["no"] == train_no:
-            train_name = train["name"]
-            break
-            
-    # Mock current station & delay
-    stations = ["Delhi Cantt", "Gurgaon", "Jaipur", "Ajmer", "Ahmedabad", "Vadodara", "Mumbai Central"]
-    current_station = random.choice(stations)
-    delay_mins = random.choice([0, 5, 15, 30, 45, 60])
-    
-    status_msg = "Running on time" if delay_mins == 0 else f"Running late by {delay_mins} minutes"
-    
     return {
         "success": True,
         "train_no": train_no,
-        "train_name": train_name,
-        "current_station": current_station,
-        "delay_minutes": delay_mins,
-        "status_message": status_msg,
+        "train_name": "Express Train",
+        "current_station": "Departed previous station",
+        "delay_minutes": 0,
+        "status_message": "Running on time",
         "last_updated": datetime.now().strftime("%H:%M:%S")
     }

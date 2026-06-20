@@ -12,9 +12,6 @@ export default function Settings({ backendUrl }) {
     sms_provider: 'mock',
     llm_model: 'llama-3.3-70b-versatile',
     elevenlabs_voice_id: '21m00Tcm4TlvDq8ikWAM',
-    rapidapi_key: '',
-    rapidapi_host: 'irctc1.p.rapidapi.com',
-    use_real_irctc_api: false,
     use_mock_llm: true,
     use_mock_stt: true,
     use_mock_tts: true,
@@ -38,9 +35,6 @@ export default function Settings({ backendUrl }) {
           sms_provider: data.sms_provider || 'mock',
           llm_model: data.llm_model || 'llama-3.3-70b-versatile',
           elevenlabs_voice_id: data.elevenlabs_voice_id || '21m00Tcm4TlvDq8ikWAM',
-          rapidapi_key: '',
-          rapidapi_host: data.rapidapi_host || 'irctc1.p.rapidapi.com',
-          use_real_irctc_api: data.use_real_irctc_api || false,
           use_mock_llm: data.use_mock_llm,
           use_mock_stt: data.use_mock_stt,
           use_mock_tts: data.use_mock_tts,
@@ -49,8 +43,7 @@ export default function Settings({ backendUrl }) {
           groq: data.groq_api_key_masked,
           deepgram: data.deepgram_api_key_masked,
           elevenlabs: data.elevenlabs_api_key_masked,
-          twilio_auth: data.twilio_auth_token_masked,
-          rapidapi: data.rapidapi_key_masked
+          twilio_auth: data.twilio_auth_token_masked
         })
       }
     } catch (err) {
@@ -310,76 +303,7 @@ export default function Settings({ backendUrl }) {
           </select>
         </div>
 
-        {/* RapidAPI Train API Config */}
-        <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px', marginTop: '4px' }}>
-          <h3 style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: '12px', color: 'var(--color-primary)' }}>Indian Railways Live API (RapidAPI)</h3>
-          
-          <div style={{ display: 'flex', alignItems: 'center', marginBottom: '12px' }}>
-            <input
-              type="checkbox"
-              id="use_real_irctc_api"
-              name="use_real_irctc_api"
-              checked={config.use_real_irctc_api}
-              onChange={handleChange}
-              style={{ marginRight: '8px' }}
-            />
-            <label htmlFor="use_real_irctc_api" style={{ fontSize: '0.85rem', fontWeight: 500, color: 'var(--text-primary)' }}>
-              Enable Real Train API (RapidAPI)
-            </label>
-          </div>
 
-          {config.use_real_irctc_api && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', paddingLeft: '20px' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                  RapidAPI Key {maskedKeys.rapidapi && <span style={{ color: 'var(--color-success)' }}>({maskedKeys.rapidapi})</span>}
-                </label>
-                <input
-                  type="password"
-                  name="rapidapi_key"
-                  placeholder={maskedKeys.rapidapi ? "Leave empty to keep existing key" : "Enter RapidAPI Key"}
-                  value={config.rapidapi_key}
-                  onChange={handleChange}
-                  style={{
-                    width: '100%',
-                    padding: '8px 10px',
-                    borderRadius: '6px',
-                    border: '1px solid var(--border-color)',
-                    background: 'rgba(255, 255, 255, 0.03)',
-                    color: 'var(--text-primary)',
-                    fontSize: '0.85rem',
-                    fontFamily: 'inherit',
-                    outline: 'none'
-                  }}
-                />
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                  RapidAPI Host
-                </label>
-                <input
-                  type="text"
-                  name="rapidapi_host"
-                  placeholder="irctc1.p.rapidapi.com"
-                  value={config.rapidapi_host}
-                  onChange={handleChange}
-                  style={{
-                    width: '100%',
-                    padding: '8px 10px',
-                    borderRadius: '6px',
-                    border: '1px solid var(--border-color)',
-                    background: 'rgba(255, 255, 255, 0.03)',
-                    color: 'var(--text-primary)',
-                    fontSize: '0.85rem',
-                    fontFamily: 'inherit',
-                    outline: 'none'
-                  }}
-                />
-              </div>
-            </div>
-          )}
-        </div>
 
         <button
           type="submit"

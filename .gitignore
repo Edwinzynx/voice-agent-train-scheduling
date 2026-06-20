@@ -22,3 +22,20 @@ backend/voice_agent.log
 .vscode/
 .idea/
 .DS_Store
+
+# Temporary scratch files and artifacts
+*.html
+*.png
+*.jpg
+*.jpeg
+*.webp
+scratch_*.py
+inspect_*.py
+parse_*.py
+selenium_inspect_*.py
+selenium_fill_*.py
+selenium_search_*.py
+selenium_test_*.py
+test_irctc_direct.py
+read_transcript.py
+non_existent_db_file_path_eval.db

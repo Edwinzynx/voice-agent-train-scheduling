@@ -21,11 +21,6 @@ class AppSettings(BaseModel):
     # TTS config
     elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"
     
-    # RapidAPI config
-    rapidapi_key: str = ""
-    rapidapi_host: str = "irctc1.p.rapidapi.com"
-    use_real_irctc_api: bool = False
-    
     # Mode flags
     use_mock_llm: bool = False
     use_mock_stt: bool = False
@@ -51,9 +46,6 @@ class ConfigManager:
         self.settings.twilio_auth_token = os.getenv("TWILIO_AUTH_TOKEN", "")
         self.settings.twilio_phone_number = os.getenv("TWILIO_PHONE_NUMBER", "")
         self.settings.llm_model = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
-        self.settings.rapidapi_key = os.getenv("RAPIDAPI_KEY", "")
-        self.settings.rapidapi_host = os.getenv("RAPIDAPI_HOST", "irctc1.p.rapidapi.com")
-        self.settings.use_real_irctc_api = os.getenv("USE_REAL_IRCTC_API", "False").lower() in ("true", "1", "yes")
         
         # 2. Override with local json file if exists
         if CONFIG_FILE.exists():
