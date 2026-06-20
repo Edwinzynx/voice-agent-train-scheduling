@@ -206,7 +206,11 @@ class FSMCoordinator:
             elif new_intent in ["CANCEL_TICKET", "GET_PNR_STATUS"]:
                 should_switch_intent = True
             elif session.intent in ["FIND_TRAINS", "CHECK_SEAT", "UNKNOWN"] and new_intent == "BOOK_TICKET":
-                should_switch_intent = True
+                # Only switch if the user explicitly mentions booking/ticket keywords to prevent misclassification of slot answers
+                text_lower = user_input.lower()
+                booking_keywords = ["book", "booking", "ticket", "reserve", "yatra", "kar do", "confirm"]
+                if any(kw in text_lower for kw in booking_keywords):
+                    should_switch_intent = True
             elif session.intent == "UNKNOWN" and new_intent != "UNKNOWN":
                 should_switch_intent = True
                 

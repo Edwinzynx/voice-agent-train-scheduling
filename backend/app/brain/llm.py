@@ -501,8 +501,19 @@ def run_brain_step(state: str, user_input: str, context: dict) -> dict:
             formatted_prompt = CONFIRMATION_SYSTEM_PROMPT.replace("{details}", json.dumps(context.get('slots', {}))).replace("{dialect}", context.get("dialect", "Hinglish")).replace("{intent}", intent)
             return call_groq_json(formatted_prompt, user_prompt, api_key)
         elif state == "EXECUTE" or state == "END":
-            user_prompt = f"Execution result: {json.dumps(context.get('result', {}))}"
-            formatted_prompt = EXECUTE_SYSTEM_PROMPT.replace("{result}", json.dumps(context.get('result', {}))).replace("{dialect}", context.get("dialect", "Hinglish"))
+            res_obj = context.get('result', {})
+            if isinstance(res_obj, dict) and "trains" in res_obj:
+                res_obj_clean = res_obj.copy()
+                clean_list = []
+                for t in res_obj.get("trains", []):
+                    t_clean = t.copy()
+                    t_clean.pop("raw_train_data", None)
+                    clean_list.append(t_clean)
+                res_obj_clean["trains"] = clean_list
+                res_obj = res_obj_clean
+                
+            user_prompt = f"Execution result: {json.dumps(res_obj)}"
+            formatted_prompt = EXECUTE_SYSTEM_PROMPT.replace("{result}", json.dumps(res_obj)).replace("{dialect}", context.get("dialect", "Hinglish"))
             return call_groq_json(formatted_prompt, user_prompt, api_key)
     except Exception as e:
         logger.error(f"Groq execution failed, falling back to mock brain state runner. Error: {e}")
