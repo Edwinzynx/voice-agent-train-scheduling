@@ -4,12 +4,14 @@ import WebRTCCall from './components/WebRTCCall'
 import CallLogger from './components/CallLogger'
 import Settings from './components/Settings'
 import EvalRunner from './components/EvalRunner'
+import LandingPage from './components/landing/LandingPage'
 import './App.css'
 
 // Backend URL pointing to the FastAPI port
-const BACKEND_URL = "http://localhost:8000"
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000"
 
 export default function App() {
+  const [viewMode, setViewMode] = useState('landing')
   const [activeCallData, setActiveCallData] = useState({
     callId: null,
     state: 'IDLE',
@@ -57,25 +59,51 @@ export default function App() {
     }
   }
 
+  if (viewMode === 'landing') {
+    return <LandingPage onLaunchConsole={() => setViewMode('sandbox')} />
+  }
+
   return (
     <div className="app-container">
       {/* Premium Dashboard Header */}
       <header className="app-header">
         <div className="app-title-container">
-          <div style={{
-            background: 'linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%)',
-            padding: '8px',
-            borderRadius: '12px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: '0 4px 12px rgba(99, 102, 241, 0.3)'
-          }}>
+          <div 
+            onClick={() => setViewMode('landing')}
+            style={{
+              background: 'linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%)',
+              padding: '8px',
+              borderRadius: '12px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: '0 4px 12px rgba(99, 102, 241, 0.3)',
+              cursor: 'pointer'
+            }}
+          >
             <Train size={24} color="white" />
           </div>
           <div>
-            <h1 className="app-title">LocoVoice</h1>
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Indian Railways Conversational Agent</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <h1 className="app-title" style={{ cursor: 'pointer' }} onClick={() => setViewMode('landing')}>LocoVoice</h1>
+              <button 
+                onClick={() => setViewMode('landing')}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid var(--border-color)',
+                  color: 'var(--text-secondary)',
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  fontSize: '0.7rem',
+                  cursor: 'pointer',
+                  fontWeight: '600'
+                }}
+                className="preset-pill"
+              >
+                &larr; Exit Console
+              </button>
+            </div>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Indian Railways Conversational Agent Sandbox</span>
           </div>
         </div>
 
