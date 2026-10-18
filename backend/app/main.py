@@ -46,6 +46,8 @@ app.include_router(eval.router)
 def read_root():
     return {
         "status": "healthy",
+        "revision": os.getenv("RENDER_GIT_COMMIT", "development"),
+        "speech_provider": "sarvam",
         "app": "Train Booking Voice Agent Backend",
         "docs_url": "/docs"
     }

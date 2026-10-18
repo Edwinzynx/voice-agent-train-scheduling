@@ -7,6 +7,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 CONFIG_FILE = BASE_DIR / "config.json"
 
 class AppSettings(BaseModel):
+    environment: str = "development"
+    admin_token: str = ""
+    sarvam_api_key: str = ""
+    sarvam_stt_model: str = "saaras:v3-realtime"
+    sarvam_tts_model: str = "bulbul:v3"
+    sarvam_voice: str = "shubh"
+    allow_simulated_railway: bool = False
     groq_api_key: str = ""
     deepgram_api_key: str = ""
     elevenlabs_api_key: str = ""
@@ -16,7 +23,7 @@ class AppSettings(BaseModel):
     sms_provider: str = "mock"  # "mock" or "twilio" or "msg91"
     
     # LLM config
-    llm_model: str = "llama-3.3-70b-versatile"
+    llm_model: str = "qwen/qwen3.8-27b"
     
     # TTS config
     elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"
@@ -37,63 +44,47 @@ class ConfigManager:
         self.load_config()
 
     def load_config(self):
-        # 1. Load from environment variables first
-        self.settings.groq_api_key = os.getenv("GROQ_API_KEY", "")
-        self.settings.deepgram_api_key = os.getenv("DEEPGRAM_API_KEY", "")
-        self.settings.elevenlabs_api_key = os.getenv("ELEVENLABS_API_KEY", "")
-        self.settings.elevenlabs_voice_id = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
-        self.settings.twilio_account_sid = os.getenv("TWILIO_ACCOUNT_SID", "")
-        self.settings.twilio_auth_token = os.getenv("TWILIO_AUTH_TOKEN", "")
-        self.settings.twilio_phone_number = os.getenv("TWILIO_PHONE_NUMBER", "")
-        self.settings.llm_model = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
-        
-        # 2. Override with local json file if exists
-        if CONFIG_FILE.exists():
-            try:
-                with open(CONFIG_FILE, "r") as f:
-                    file_data = json.load(f)
-                    for key, val in file_data.items():
-                        if hasattr(self.settings, key):
-                            setattr(self.settings, key, val)
-            except Exception as e:
-                print(f"Error loading config.json: {e}")
-                
-        # 3. Dynamic Mock fallback checks
-        # If API keys are empty, set mock modes to True
-        if not self.settings.groq_api_key:
-            self.settings.use_mock_llm = True
-        if not self.settings.deepgram_api_key:
-            self.settings.use_mock_stt = True
-        if not self.settings.elevenlabs_api_key:
-            self.settings.use_mock_tts = True
+        production = os.getenv("APP_ENV") == "production" or os.getenv("RENDER") == "true"
+        values = {}
+        if CONFIG_FILE.exists() and not production:
+            with open(CONFIG_FILE, encoding="utf-8") as config_file:
+                values = json.load(config_file)
+        for key in AppSettings.model_fields:
+            if key.upper() in os.environ:
+                values[key] = os.environ[key.upper()]
+        if "PORT" in os.environ:
+            values["port"] = os.environ["PORT"]
+        if "DATABASE_URL" in os.environ:
+            values["db_url"] = os.environ["DATABASE_URL"]
+        if production:
+            values["environment"] = "production"
+        self.settings = AppSettings.model_validate(values)
+        if self.settings.environment == "production":
+            self.settings.use_mock_llm = False
+            self.settings.use_mock_stt = False
+            self.settings.use_mock_tts = False
+            self.settings.allow_simulated_railway = False
+        else:
+            if not self.settings.groq_api_key:
+                self.settings.use_mock_llm = True
+            if not self.settings.sarvam_api_key:
+                self.settings.use_mock_stt = True
+                self.settings.use_mock_tts = True
 
     def save_config(self, new_settings: dict):
-        # Merge new settings
-        for key, val in new_settings.items():
-            if hasattr(self.settings, key):
-                setattr(self.settings, key, val)
-                
-        # Save to file
-        try:
-            with open(CONFIG_FILE, "w") as f:
-                json.dump(self.settings.model_dump(), f, indent=4)
-        except Exception as e:
-            print(f"Error saving config.json: {e}")
-            
-        # Re-verify mock fallbacks
-        if not self.settings.groq_api_key:
-            self.settings.use_mock_llm = True
-        else:
-            self.settings.use_mock_llm = new_settings.get("use_mock_llm", False)
-            
-        if not self.settings.deepgram_api_key:
-            self.settings.use_mock_stt = True
-        else:
-            self.settings.use_mock_stt = new_settings.get("use_mock_stt", False)
-            
-        if not self.settings.elevenlabs_api_key:
-            self.settings.use_mock_tts = True
-        else:
-            self.settings.use_mock_tts = new_settings.get("use_mock_tts", False)
+        if self.settings.environment == "production":
+            raise ValueError("Manage production configuration in the hosting environment.")
+        values = self.settings.model_dump()
+        values.update(new_settings)
+        updated = AppSettings.model_validate(values)
+        if not updated.groq_api_key:
+            updated.use_mock_llm = True
+        if not updated.sarvam_api_key:
+            updated.use_mock_stt = True
+            updated.use_mock_tts = True
+        # A failed disk write must not report a successful save.
+        with open(CONFIG_FILE, "w", encoding="utf-8") as config_file:
+            json.dump(updated.model_dump(), config_file, indent=4)
+        self.settings = updated
 
 config_manager = ConfigManager()

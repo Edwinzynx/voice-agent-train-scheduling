@@ -1,6 +1,9 @@
 import random
+import re
 from datetime import datetime
 import httpx
+from ..brain.validation import normalize_date
+from ..config import config_manager
 
 # In-memory database of bookings to allow stateful search/cancel during a session.
 # Keys are PNRs (10-digit strings).
@@ -64,32 +67,22 @@ def resolve_station_code(station_name: str) -> str:
     Resolves station name to IRCTC station code using static map fallback.
     """
     if not station_name:
-        return "NDLS"
+        raise ValueError("Please provide a source and destination station.")
         
     name_clean = station_name.strip().lower()
     if name_clean in STATION_CODE_MAP:
         return STATION_CODE_MAP[name_clean]
         
-    return station_name[:3].upper()
+    code = station_name.strip().upper()
+    if code in STATION_CODE_MAP.values():
+        return code
+    raise ValueError(f"Station '{station_name}' is not recognized. Please use a supported station name or code.")
 
 def format_date_for_api(date_str: str) -> str:
     """
-    Converts date string (e.g., '2026-06-20' or '20-06-2026') to ConfirmTkt API format 'DD-MM-YYYY'.
-    If parsing fails or date is empty, defaults to today's date.
+    Convert a validated future/present date to DD-MM-YYYY; reject invalid dates.
     """
-    if not date_str:
-        return datetime.now().strftime("%d-%m-%Y")
-    
-    # Try DD-MM-YYYY, YYYY-MM-DD, and slash variants
-    for fmt in ("%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d"):
-        try:
-            dt = datetime.strptime(date_str.strip(), fmt)
-            return dt.strftime("%d-%m-%Y")
-        except ValueError:
-            continue
-            
-    # Fallback to today if not parseable
-    return datetime.now().strftime("%d-%m-%Y")
+    return datetime.strptime(normalize_date(date_str), "%Y-%m-%d").strftime("%d-%m-%Y")
 
 def find_trains(src: str, dst: str, date: str) -> dict:
     """
@@ -122,26 +115,38 @@ def find_trains(src: str, dst: str, date: str) -> dict:
             
             mapped_trains = []
             for t in trains:
-                duration_mins = t.get("duration", 360)
+                number = t.get("trainNumber") or t.get("trainNo")
+                if not number:
+                    continue
+                duration_mins = t.get("duration")
                 try:
                     mins = int(duration_mins)
                     hours = mins // 60
                     remaining_mins = mins % 60
                     duration_str = f"{hours}h {remaining_mins:02d}m"
                 except:
-                    duration_str = "6h 00m"
+                    duration_str = None
+                classes = t.get("avlClasses") or []
+                if isinstance(classes, str):
+                    classes = [code.strip().upper() for code in re.split(r"[,\s]+", classes) if code.strip()]
                     
                 mapped_trains.append({
-                    "no": t.get("trainNumber") or t.get("trainNo") or "12002",
-                    "name": t.get("trainName") or "Express",
+                    "no": str(number),
+                    "name": t.get("trainName") or str(number),
                     "src": t.get("fromStnName") or src,
                     "dst": t.get("toStnName") or dst,
-                    "dep": t.get("departureTime") or "06:00",
-                    "arr": t.get("arrivalTime") or "12:00",
+                    "dep": t.get("departureTime"),
+                    "arr": t.get("arrivalTime"),
                     "duration": duration_str,
-                    "classes": t.get("avlClasses") or ["CC", "EC", "3A", "SL"],
+                    "classes": classes,
                     "raw_train_data": t
                 })
+                details = {}
+                for code in classes:
+                    availability = check_seat_availability(str(number), date, code, src=src, dst=dst, train_data=t)
+                    if availability.get("success"):
+                        details[code] = {"status": availability["status"], "seats": availability["seats_available"], "price": availability["price"]}
+                mapped_trains[-1]["class_details"] = details
             
             if mapped_trains:
                 return {
@@ -176,8 +181,8 @@ def check_seat_availability(train_no: str, date: str, class_code: str, quota: st
         if train_data:
             target_train = train_data
         else:
-            src_code = resolve_station_code(src) if src else "NDLS"
-            dst_code = resolve_station_code(dst) if dst else "CDG"
+            src_code = resolve_station_code(src)
+            dst_code = resolve_station_code(dst)
             api_date = format_date_for_api(date)
             
             url = "https://cttrainsapi.confirmtkt.com/api/v1/trains/search"
@@ -238,23 +243,28 @@ def check_seat_availability(train_no: str, date: str, class_code: str, quota: st
                 "error": f"Class {class_code} details not available for train {train_no} under quota {quota}."
             }
             
-        status_str = avail_info.get("availabilityDisplayName") or avail_info.get("availability") or "AVAILABLE"
-        price_str = avail_info.get("fare") or "850"
+        status_str = str(avail_info.get("availabilityDisplayName") or avail_info.get("availability") or "UNKNOWN")
+        price_str = avail_info.get("fare")
+        cached_date = avail_info.get("date")
+        if cached_date and str(cached_date)[:10] != normalize_date(date):
+            return {"success": False, "error": "Seat availability belongs to a different journey date. Please search again."}
         
-        seats = 0
-        if "AVAILABLE" in status_str.upper():
+        seats = None
+        if re.match(r"^(AVAILABLE|AVL)\b", status_str.upper()):
             parts = status_str.replace("-", " ").split()
             digits = [int(s) for s in parts if s.isdigit()]
             if digits:
                 seats = digits[0]
             else:
-                seats = 15
+                seats = None
         elif "WL" in status_str.upper() or "RAC" in status_str.upper():
             seats = 0
             
-        price = 850.0
+        price = None
         try:
             price = float(price_str)
+            if price < 0:
+                price = None
         except:
             pass
             
@@ -279,6 +289,8 @@ def book_ticket(train_no: str, date: str, class_code: str, passengers: list, pay
     """
     Book a ticket and return PNR. Real-time train info is fetched from the ConfirmTkt API.
     """
+    if not simulation_enabled():
+        return service_unavailable("Ticket booking")
     if not payment_confirmed:
         return {
             "success": False,
@@ -326,6 +338,8 @@ def cancel_ticket(pnr: str) -> dict:
     """
     Cancel a ticket by PNR.
     """
+    if not simulation_enabled():
+        return service_unavailable("Ticket cancellation")
     if pnr in BOOKINGS_DB:
         booking = BOOKINGS_DB[pnr]
         if booking["status"] == "CAN":
@@ -351,6 +365,8 @@ def get_pnr_status(pnr: str) -> dict:
     """
     Fetch PNR status.
     """
+    if not simulation_enabled():
+        return service_unavailable("PNR status")
     if pnr in BOOKINGS_DB:
         return {
             "success": True,
@@ -365,6 +381,8 @@ def get_live_train_info(train_no: str) -> dict:
     """
     Get live running status for a train.
     """
+    if not simulation_enabled():
+        return service_unavailable("Live train status")
     return {
         "success": True,
         "train_no": train_no,
@@ -374,3 +392,13 @@ def get_live_train_info(train_no: str) -> dict:
         "status_message": "Running on time",
         "last_updated": datetime.now().strftime("%H:%M:%S")
     }
+
+
+def simulation_enabled():
+    settings = config_manager.settings
+    return settings.environment != "production" and settings.allow_simulated_railway
+
+
+def service_unavailable(feature):
+    return {"success": False, "code": "SERVICE_NOT_CONNECTED",
+            "error": f"{feature} service is not connected. No booking, cancellation, payment, or refund has been made."}

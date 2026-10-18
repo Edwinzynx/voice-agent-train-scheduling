@@ -1,0 +1,13 @@
+.git
+.venv
+**/node_modules
+**/dist
+**/__pycache__
+**/.pytest_cache
+**/.env*
+**/config.json
+**/*.db
+**/*.db-*
+**/*.log
+interview_prep
+INTERVIEW_GUIDE.md

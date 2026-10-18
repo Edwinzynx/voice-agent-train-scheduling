@@ -1,14 +1,14 @@
 import React, { useState, useEffect } from 'react'
 import { Award, BarChart3, TrendingUp, Play, CheckCircle2, AlertCircle, Clock } from 'lucide-react'
 
-export default function EvalRunner({ backendUrl, onNewEval }) {
+export default function EvalRunner({ backendUrl, onNewEval, adminToken }) {
   const [runs, setRuns] = useState([])
   const [running, setRunning] = useState(false)
   const [selectedRun, setSelectedRun] = useState(null)
 
   const fetchRuns = async () => {
     try {
-      const res = await fetch(`${backendUrl}/eval/runs`)
+      const res = await fetch(`${backendUrl}/eval/runs`, { headers: { Authorization: `Bearer ${adminToken}` } })
       if (res.ok) {
         const data = await res.json()
         setRuns(data)
@@ -28,13 +28,13 @@ export default function EvalRunner({ backendUrl, onNewEval }) {
   const runEvaluation = async () => {
     setRunning(true)
     try {
-      const res = await fetch(`${backendUrl}/eval/run`, { method: 'POST' })
+      const res = await fetch(`${backendUrl}/eval/run`, { method: 'POST', headers: { Authorization: `Bearer ${adminToken}` } })
       if (res.ok) {
         // Poll for completion
         let attempts = 0
         const interval = setInterval(async () => {
           attempts++
-          const checkRes = await fetch(`${backendUrl}/eval/runs`)
+          const checkRes = await fetch(`${backendUrl}/eval/runs`, { headers: { Authorization: `Bearer ${adminToken}` } })
           if (checkRes.ok) {
             const data = await checkRes.json()
             setRuns(data)

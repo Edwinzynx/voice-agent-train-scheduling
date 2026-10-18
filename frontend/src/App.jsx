@@ -2,15 +2,25 @@ import React, { useState, useEffect } from 'react'
 import { Train, Info } from 'lucide-react'
 import WebRTCCall from './components/WebRTCCall'
 import CallLogger from './components/CallLogger'
-import Settings from './components/Settings'
 import EvalRunner from './components/EvalRunner'
 import LandingPage from './components/landing/LandingPage'
 import './App.css'
 
 // Backend URL pointing to the FastAPI port
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000"
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || (import.meta.env.DEV ? "http://localhost:8000" : "https://voice-agent-train-scheduling.onrender.com")
 
 export default function App() {
+  const [adminToken, setAdminToken] = useState('')
+  const [tokenDraft, setTokenDraft] = useState('')
+  const [adminError, setAdminError] = useState('')
+  const unlockAdmin = async () => {
+    const response = await fetch(`${BACKEND_URL}/dashboard/stats`, { headers: { Authorization: `Bearer ${tokenDraft}` } }).catch(() => null)
+    if (!response?.ok) { setAdminError('Owner access could not be verified.'); return }
+    setStats(await response.json())
+    setAdminToken(tokenDraft)
+    setTokenDraft('')
+    setAdminError('')
+  }
   const [viewMode, setViewMode] = useState('landing')
   const [activeCallData, setActiveCallData] = useState({
     callId: null,
@@ -28,8 +38,9 @@ export default function App() {
   })
 
   const fetchStats = async () => {
+    if (!adminToken) return
     try {
-      const res = await fetch(`${BACKEND_URL}/dashboard/stats`)
+      const res = await fetch(`${BACKEND_URL}/dashboard/stats`, { headers: { Authorization: `Bearer ${adminToken}` } })
       if (res.ok) {
         const data = await res.json()
         setStats(data)
@@ -44,14 +55,14 @@ export default function App() {
     // Poll stats occasionally
     const interval = setInterval(fetchStats, 5000)
     return () => clearInterval(interval)
-  }, [])
+  }, [adminToken])
 
   const handleCallStateUpdate = (update) => {
-    setActiveCallData({
+    setActiveCallData(previous => ({
       callId: update.callId,
-      state: update.state || activeCallData.state,
-      slots: update.slots ? { ...activeCallData.slots, ...update.slots } : activeCallData.slots
-    })
+      state: update.state || previous.state,
+      slots: update.slots || previous.slots
+    }))
     
     // Refresh stats if call completes
     if (update.state === 'END') {
@@ -108,7 +119,7 @@ export default function App() {
         </div>
 
         {/* Real-time Ticker stats */}
-        <div className="stats-bar">
+        {adminToken && <div className="stats-bar">
           <div className="stat-item">
             <span className="stat-val">{stats.total_calls}</span>
             <span className="stat-lbl">Total Calls</span>
@@ -129,7 +140,7 @@ export default function App() {
             <span className="stat-val" style={{ color: 'var(--color-warning)' }}>{stats.active_calls}</span>
             <span className="stat-lbl">Active calls</span>
           </div>
-        </div>
+        </div>}
       </header>
 
       {/* Main Grid Workspace */}
@@ -140,21 +151,29 @@ export default function App() {
             backendUrl={BACKEND_URL} 
             onCallStateChange={handleCallStateUpdate} 
           />
-          <Settings 
-            backendUrl={BACKEND_URL} 
-          />
+          <p>Train search and seat checks use live data. Booking, cancellation, PNR and running status are unavailable until their services are connected.</p>
         </div>
 
         {/* Right Column: Active State Logs + Evaluation panel */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-          <CallLogger 
+          {!adminToken ? <div className="glass-panel" style={{ padding: '24px' }}>
+            <p>Owner dashboard</p>
+            <input aria-label="Owner access token" type="password" autoComplete="off" value={tokenDraft} onChange={event => setTokenDraft(event.target.value)} placeholder="Owner access token" />
+            <button onClick={unlockAdmin}>Unlock</button>
+            {adminError && <p role="alert">{adminError}</p>}
+          </div> : <>
+          <button onClick={() => setAdminToken('')}>Lock owner dashboard</button>
+          <CallLogger
+            adminToken={adminToken}
             backendUrl={BACKEND_URL} 
             activeCallData={activeCallData} 
           />
           <EvalRunner 
+            adminToken={adminToken}
             backendUrl={BACKEND_URL}
             onNewEval={fetchStats}
           />
+          </>}
         </div>
       </main>
 
@@ -171,7 +190,7 @@ export default function App() {
         gap: '6px'
       }}>
         <Info size={14} />
-        Supports dynamic voice transitions for booking, cancellations, seat availability, live train status, and PNR status checks.
+        Voice-assisted train search and seat availability. Provider credentials are managed by the service owner.
       </footer>
     </div>
   )

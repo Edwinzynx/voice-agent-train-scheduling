@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { Phone, PhoneOff, Mic, MicOff, Volume2, Activity } from 'lucide-react'
 import AudioWave from './AudioWave'
+import useVoiceCall from './useVoiceCall'
 
 const getStationCode = (name) => {
   if (!name) return '';
@@ -51,6 +52,7 @@ const getClassName = (code) => {
   const map = {
     'SL': 'Sleeper (SL)',
     '3A': 'AC 3 Tier (3A)',
+    '3E': 'AC 3 Tier Economy (3E)',
     '2A': 'AC 2 Tier (2A)',
     '1A': 'AC First Class (1A)',
     'CC': 'AC Chair Car (CC)',
@@ -71,400 +73,12 @@ const getStableTicketNo = (pnr) => {
 };
 
 export default function WebRTCCall({ backendUrl, onCallStateChange }) {
-  const [inCall, setInCall] = useState(false)
-  const [callId, setCallId] = useState(null)
-  const [currentState, setCurrentState] = useState('DISCONNECTED')
-  const [transcript, setTranscript] = useState([])
-  const [slots, setSlots] = useState({})
-  const [useBrowserSpeech, setUseBrowserSpeech] = useState(true)
-  const [isMuted, setIsMuted] = useState(false)
-  const [agentSpeaking, setAgentSpeaking] = useState(false)
-
-  const socketRef = useRef(null)
-  const recognitionRef = useRef(null)
-  const audioContextRef = useRef(null)
-  const isListeningRef = useRef(false)
-  const agentSpeakingRef = useRef(false)
-  const isMutedRef = useRef(false)
-  const activeAudioRef = useRef(null)
-  const lastAgentSpokenTextRef = useRef('')
-
-  // Sync state variables to refs to ensure safeStart/Stop always read fresh state
-  useEffect(() => {
-    agentSpeakingRef.current = agentSpeaking
-  }, [agentSpeaking])
-
-  useEffect(() => {
-    isMutedRef.current = isMuted
-  }, [isMuted])
-
-  const safeStartRecognition = () => {
-    if (recognitionRef.current && !isListeningRef.current && !isMutedRef.current) {
-      try {
-        recognitionRef.current.start()
-      } catch (e) {
-        // Defensive check: if it is already started, keep isListeningRef in sync
-        if (e.message && (e.message.includes("already started") || e.name === "InvalidStateError")) {
-          isListeningRef.current = true;
-        } else {
-          console.warn("safeStartRecognition failed:", e)
-        }
-      }
-    }
-  }
-
-  const safeStopRecognition = () => {
-    if (recognitionRef.current && isListeningRef.current) {
-      try {
-        // Use abort() instead of stop() to immediately discard current audio buffer
-        // and prevent the microphone from picking up the agent's voice.
-        recognitionRef.current.abort()
-      } catch (e) {
-        console.warn("safeStopRecognition failed:", e)
-      }
-    }
-  }
-
-  // Clean up on unmount
-  useEffect(() => {
-    return () => {
-      endCall()
-    }
-  }, [])
-
-  const startCall = async () => {
-    // Check if configs on backend are using mock STT/TTS
-    let mockStt = true
-    let mockTts = true
-    try {
-      const res = await fetch(`${backendUrl}/dashboard/config`)
-      if (res.ok) {
-        const configData = await res.json()
-        mockStt = configData.use_mock_stt
-        mockTts = configData.use_mock_tts
-        setUseBrowserSpeech(mockStt)
-      }
-    } catch (err) {
-      console.warn("Could not fetch settings, defaulting browser speech to true.")
-    }
-
-    const uniqueId = `call-${Math.random().toString(36).substring(2, 9)}`
-    setCallId(uniqueId)
-    setInCall(true)
-    setTranscript([])
-    setSlots({})
-    setCurrentState('CONNECTING')
-    setAgentSpeaking(false)
-    isListeningRef.current = false
-
-    // Setup websocket
-    const wsUrl = `${backendUrl.replace('http', 'ws')}/calls/ws/${uniqueId}`
-    const ws = new WebSocket(wsUrl)
-    socketRef.current = ws
-
-    ws.onopen = () => {
-      setCurrentState('GREET')
-    }
-
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data)
-
-      if (data.type === 'agent_response') {
-        const text = data.text
-        lastAgentSpokenTextRef.current = text
-        const state = data.state
-        const newSlots = data.slots
-
-        setCurrentState(state)
-        setSlots(newSlots)
-
-        // Dynamically adjust SpeechRecognition language based on dialect
-        if (data.dialect && recognitionRef.current) {
-          if (data.dialect === 'Hindi') {
-            recognitionRef.current.lang = 'hi-IN'
-          } else if (data.dialect === 'English') {
-            recognitionRef.current.lang = 'en-US'
-          } else {
-            // Hinglish defaults to hi-IN which has excellent phonetics for mixed English/Hindi vocabulary
-            recognitionRef.current.lang = 'hi-IN'
-          }
-          console.log("Speech recognition language updated dynamically:", recognitionRef.current.lang)
-        }
-
-        // Add to transcript list
-        setTranscript(prev => [...prev, {
-          sender: 'agent',
-          text,
-          timestamp: new Date(),
-          availableTrains: data.available_trains || [],
-          lastActionResult: data.last_action_result || null,
-          slots: newSlots,
-          state: state
-        }])
-
-        // Callback to parent component to update dashboard
-        onCallStateChange({ callId: uniqueId, state, slots: newSlots, transcriptText: text, direction: 'outbound' })
-
-        // Play TTS Response
-        if (mockTts) {
-          // Play via browser speechSynthesis
-          setAgentSpeaking(true)
-          agentSpeakingRef.current = true
-          window.speechSynthesis.cancel() // clear any queue
-          const utterance = new SpeechSynthesisUtterance(text)
-          utterance.rate = 1.15
-          // Try to select Hinglish/Hindi or English voice
-          const voices = window.speechSynthesis.getVoices()
-          const hindiVoice = voices.find(v => v.lang.includes('hi') || v.lang.includes('in'))
-          if (hindiVoice) utterance.voice = hindiVoice
-
-          utterance.onend = () => {
-            agentSpeakingRef.current = false
-            setAgentSpeaking(false)
-            if (state === 'END') {
-              endCall()
-            } else {
-              safeStartRecognition()
-            }
-          }
-          utterance.onerror = () => {
-            agentSpeakingRef.current = false
-            setAgentSpeaking(false)
-            if (state === 'END') {
-              endCall()
-            } else {
-              safeStartRecognition()
-            }
-          }
-          window.speechSynthesis.speak(utterance)
-        } else if (data.audio) {
-          // Play server base64 audio stream
-          setAgentSpeaking(true)
-          agentSpeakingRef.current = true
-          const audio = new Audio("data:audio/mpeg;base64," + data.audio)
-          activeAudioRef.current = audio
-          audio.onended = () => {
-            agentSpeakingRef.current = false
-            setAgentSpeaking(false)
-            if (state === 'END') {
-              endCall()
-            } else {
-              safeStartRecognition()
-            }
-          }
-          audio.play().catch(err => {
-            console.error("Audio playback error:", err)
-            agentSpeakingRef.current = false
-            setAgentSpeaking(false)
-            if (state === 'END') {
-              endCall()
-            }
-          })
-        }
-      }
-    }
-
-    ws.onclose = () => {
-      endCall()
-    }
-
-    ws.onerror = (err) => {
-      console.error("WS connection error:", err)
-      endCall()
-    }
-
-    // Setup Speech Recognition (STT) if in mock/browser mode
-    if (mockStt) {
-      let fatalErrorOccurred = false
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-      if (SpeechRecognition) {
-        const recognition = new SpeechRecognition()
-        recognitionRef.current = recognition
-        recognition.continuous = false // turn off continuous to fire onend which lets us restart turn-by-turn
-        recognition.interimResults = false
-        recognition.lang = 'en-IN' // Start with en-IN (Indian English) which matches either English or Hindi keywords in language choice
-
-        recognition.onstart = () => {
-          isListeningRef.current = true
-          console.log("Speech recognition started")
-        }
-
-        recognition.onspeechstart = () => {
-          console.log("Mic detected speech sound onset.")
-        }
-
-        recognition.onresult = (event) => {
-          const resultText = event.results[0][0].transcript
-
-          // Check if this result is just an echo of the agent's own speech
-          const textClean = resultText.trim().toLowerCase()
-          const agentTextClean = (lastAgentSpokenTextRef.current || '').trim().toLowerCase()
-          const wordsResult = textClean.split(/\s+/).filter(w => w.length > 2)
-          let matchCount = 0
-          wordsResult.forEach(w => {
-            if (agentTextClean.includes(w)) matchCount++
-          })
-          const overlapRatio = wordsResult.length > 0 ? matchCount / wordsResult.length : 0
-
-          // If the overlap is high and the phrase is substantial (e.g. >= 3 words), it's an echo loop.
-          if (overlapRatio > 0.5 && wordsResult.length >= 3) {
-            console.log("Echo loop detected and ignored:", resultText)
-            return
-          }
-
-          // Double check interruption on result as well using conversational fillers/interrupt words
-          const words = textClean.split(/\s+/)
-          const interruptWords = ["uh", "uhh", "um", "excuse", "wait", "stop", "hold on", "listen", "no", "hey", "hello", "sorry", "cancel", "bhai", "suno", "ek min", "ek minute"]
-          const hasInterruptWord = interruptWords.some(w => textClean.includes(w))
-          const isSignificantSpeech = words.length >= 2 || textClean.length >= 5
-
-          if (agentSpeakingRef.current && (hasInterruptWord || isSignificantSpeech)) {
-            console.log("Barge-in: valid speech interruption detected:", resultText)
-            window.speechSynthesis.cancel()
-            if (activeAudioRef.current) {
-              try { activeAudioRef.current.pause() } catch (e) { }
-            }
-            setAgentSpeaking(false)
-          }
-
-          setTranscript(prev => [...prev, { sender: 'user', text: resultText, timestamp: new Date() }])
-
-          // Send transcript to FastAPI socket
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-              type: 'user_transcript',
-              text: resultText
-            }))
-          }
-          onCallStateChange({ callId: uniqueId, slots: {}, transcriptText: resultText, direction: 'inbound' })
-        }
-
-        recognition.onend = () => {
-          isListeningRef.current = false
-          if (fatalErrorOccurred) {
-            console.error("Speech recognition stopped due to a fatal error.")
-            return
-          }
-          // Restart loop if still in call and agent is not speaking
-          setTimeout(() => {
-            if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-              safeStartRecognition()
-            }
-          }, 300)
-        }
-
-        recognition.onerror = (event) => {
-          console.warn("Speech recognition error:", event.error)
-          if (event.error === 'not-allowed') {
-            alert("Microphone permission denied! Please click the microphone/lock icon in your browser address bar and choose 'Allow' to let the voice agent hear you.")
-            fatalErrorOccurred = true
-          } else if (event.error === 'audio-capture') {
-            alert("No microphone detected. Please check your mic connection and try again.")
-            fatalErrorOccurred = true
-          } else if (['service-not-allowed', 'language-not-supported'].includes(event.error)) {
-            fatalErrorOccurred = true
-          }
-        }
-
-        // Start listening
-        safeStartRecognition()
-      } else {
-        alert("Web Speech API is not supported in this browser. Please use Chrome or Edge.")
-      }
-    } else {
-      // In Real Audio Stream mode, we would access user mic and send PCM chunks over WS
-      setupAudioStream(ws)
-    }
-  }
-
-  const setupAudioStream = async (ws) => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 })
-      audioContextRef.current = audioContext
-
-      const source = audioContext.createMediaStreamSource(stream)
-      const processor = audioContext.createScriptProcessor(4096, 1, 1)
-
-      source.connect(processor)
-      processor.connect(audioContext.destination)
-
-      processor.onaudioprocess = (e) => {
-        if (isMuted || agentSpeaking || ws.readyState !== WebSocket.OPEN) return
-
-        const inputData = e.inputBuffer.getChannelData(0)
-        // Convert to 16-bit PCM integer array
-        const pcm16 = new Int16Array(inputData.length)
-        for (let i = 0; i < inputData.length; i++) {
-          pcm16[i] = Math.min(1, Math.max(-1, inputData[i])) * 0x7FFF
-        }
-
-        // Base64 encode and send
-        const base64Audio = b64EncodeUnicode(pcm16.buffer)
-        ws.send(JSON.stringify({
-          event: "media",
-          media: { payload: base64Audio }
-        }))
-      }
-    } catch (err) {
-      console.error("Error setting up browser mic capture stream:", err)
-    }
-  }
-
-  const b64EncodeUnicode = (buffer) => {
-    let binary = ''
-    const bytes = new Uint8Array(buffer)
-    const len = bytes.byteLength
-    for (let i = 0; i < len; i++) {
-      binary += String.fromCharCode(bytes[i])
-    }
-    return window.btoa(binary)
-  }
-
-  const endCall = () => {
-    setInCall(false)
-    setCurrentState('DISCONNECTED')
-    isListeningRef.current = false
-
-    if (socketRef.current) {
-      if (socketRef.current.readyState === WebSocket.OPEN) {
-        socketRef.current.close()
-      }
-      socketRef.current = null
-    }
-
-    if (recognitionRef.current) {
-      recognitionRef.current.onend = null
-      try { recognitionRef.current.stop() } catch (e) { }
-      recognitionRef.current = null
-    }
-
-    if (audioContextRef.current) {
-      try { audioContextRef.current.close() } catch (e) { }
-      audioContextRef.current = null
-    }
-
-    window.speechSynthesis.cancel()
-    if (activeAudioRef.current) {
-      try { activeAudioRef.current.pause() } catch (e) { }
-      activeAudioRef.current = null
-    }
-    setAgentSpeaking(false)
-  }
-
-  const toggleMute = () => {
-    setIsMuted(!isMuted)
-    if (recognitionRef.current) {
-      if (!isMuted) {
-        try { recognitionRef.current.stop() } catch (e) { }
-      } else {
-        try { recognitionRef.current.start() } catch (e) { }
-      }
-    }
-  }
+  const { inCall, callId, currentState, transcript, slots, isMuted, agentSpeaking, error,
+    startCall, endCall, toggleMute, selectTrain } = useVoiceCall(backendUrl, onCallStateChange)
 
   return (
     <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      {error && <div role="alert" style={{ color: 'var(--color-danger)', padding: '12px', border: '1px solid currentColor', borderRadius: '8px' }}>{error}</div>}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h2 style={{ fontSize: '1.25rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
           <Volume2 style={{ color: 'var(--color-primary)' }} />
@@ -512,7 +126,7 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
             // Check if there is an execution result for booking or PNR check
             let bookingData = null;
             if (t.lastActionResult) {
-              if (t.lastActionResult.pnr) {
+              if (t.lastActionResult.pnr && t.lastActionResult.train_no) {
                 bookingData = t.lastActionResult;
               } else if (t.lastActionResult.booking) {
                 bookingData = t.lastActionResult.booking;
@@ -706,9 +320,9 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
                     flexShrink: 0
                   }}>
                     {t.availableTrains.flatMap((train) => {
-                      const classes = Object.entries(train.class_details || {});
+                      const classes = (train.classes || []).map(code => [code, train.class_details?.[code] || { status: 'UNKNOWN', seats: null, price: null }]);
                       if (classes.length === 0) {
-                        return [{ train, classCode: 'CC', classInfo: { seats: 0, status: 'UNKNOWN', price: 0 } }];
+                        return [];
                       }
                       return classes.map(([classCode, classInfo]) => ({
                         train,
@@ -720,33 +334,13 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
                       const slotsDestination = t.slots?.destination || slots.destination || 'Chandigarh';
                       const slotsDate = t.slots?.date || slots.date || 'tomorrow';
 
-                      const depTime = train.dep || '06:00 AM';
-                      const arrTime = train.arr || '12:00 PM';
-                      const duration = train.duration || '06.00';
+                      const depTime = train.dep || 'Unavailable';
+                      const arrTime = train.arr || 'Unavailable';
+                      const duration = train.duration || 'Unavailable';
 
                       return (
                         <div key={idx} 
-                          onClick={() => {
-                            if (inCall && socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-                              const choiceText = `Choose train ${train.no} class ${classCode}`;
-                              window.speechSynthesis.cancel();
-                              if (activeAudioRef.current) {
-                                try { activeAudioRef.current.pause() } catch(e){}
-                              }
-                              setAgentSpeaking(false);
-                              
-                              setTranscript(prev => [...prev, { 
-                                sender: 'user', 
-                                text: `Selected: ${train.name} (${train.no}) - ${getClassName(classCode)}`, 
-                                timestamp: new Date() 
-                              }]);
-                              
-                              socketRef.current.send(JSON.stringify({
-                                type: 'user_transcript',
-                                text: choiceText
-                              }));
-                            }
-                          }}
+                          onClick={() => selectTrain(train, classCode)}
                           className="clickable-card"
                           style={{
                             width: '290px',
@@ -851,7 +445,7 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                               <span style={{ color: '#4b5563' }}>Seat Status</span>
                               <strong style={{ color: classInfo.seats > 0 ? '#10b981' : '#ef4444' }}>
-                                {classInfo.status || 'AVAILABLE'} ({classInfo.seats || 0})
+                                {classInfo.status || 'UNKNOWN'} {classInfo.seats != null ? `(${classInfo.seats})` : ''}
                               </strong>
                             </div>
 
@@ -872,7 +466,7 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '4px' }}>
                               <span style={{ color: '#111827', fontWeight: 'bold' }}>Fare</span>
                               <strong style={{ fontSize: '1.05rem', color: '#111827' }}>
-                                ₹ {parseFloat(classInfo.price || 0).toFixed(2)}
+                                {classInfo.price != null ? `₹ ${Number(classInfo.price).toFixed(2)}` : 'Fare unavailable'}
                               </strong>
                             </div>
                           </div>
@@ -971,7 +565,7 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
         justifyContent: 'space-around'
       }}>
         <span>Status: <strong style={{ color: inCall ? 'var(--color-success)' : 'var(--text-muted)' }}>{currentState}</strong></span>
-        <span>Mode: <strong>{useBrowserSpeech ? "WebSpeech (Free)" : "WebRTC Stream"}</strong></span>
+        <span>Mode: <strong>{"Live voice"}</strong></span>
       </div>
     </div>
   )

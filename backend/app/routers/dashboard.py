@@ -1,31 +1,17 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from typing import List, Dict, Any
-from pydantic import BaseModel
 from ..database import get_db
 from ..models import Call, CallLog, EvalRun
 from ..config import config_manager
 from .calls import active_connections
+from ..auth import require_admin
 
 router = APIRouter(
     prefix="/dashboard",
-    tags=["dashboard"]
+    tags=["dashboard"],
+    dependencies=[Depends(require_admin)],
 )
-
-class ConfigSchema(BaseModel):
-    groq_api_key: str = ""
-    deepgram_api_key: str = ""
-    elevenlabs_api_key: str = ""
-    twilio_account_sid: str = ""
-    twilio_auth_token: str = ""
-    twilio_phone_number: str = ""
-    sms_provider: str = "mock"
-    llm_model: str = "llama-3.3-70b-versatile"
-    elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"
-    use_mock_llm: bool = False
-    use_mock_stt: bool = False
-    use_mock_tts: bool = False
 
 @router.get("/stats")
 def get_stats(db: Session = Depends(get_db)):
@@ -118,50 +104,14 @@ def get_call_details(call_id: str, db: Session = Depends(get_db)):
 
 @router.get("/config")
 def get_config():
-    """
-    Returns current configuration settings. Sensitive keys are partially masked.
-    """
     settings = config_manager.settings
-    
-    def mask(s: str) -> str:
-        if not s:
-            return ""
-        return s[:4] + "*" * (len(s) - 8) + s[-4:] if len(s) > 8 else "****"
-
     return {
-        "groq_api_key_masked": mask(settings.groq_api_key),
-        "deepgram_api_key_masked": mask(settings.deepgram_api_key),
-        "elevenlabs_api_key_masked": mask(settings.elevenlabs_api_key),
-        "twilio_account_sid": settings.twilio_account_sid,
-        "twilio_auth_token_masked": mask(settings.twilio_auth_token),
-        "twilio_phone_number": settings.twilio_phone_number,
-        "sms_provider": settings.sms_provider,
-        "llm_model": settings.llm_model,
-        "elevenlabs_voice_id": settings.elevenlabs_voice_id,
-        "use_mock_llm": settings.use_mock_llm,
-        "use_mock_stt": settings.use_mock_stt,
-        "use_mock_tts": settings.use_mock_tts,
+        "environment": settings.environment,
+        "has_sarvam": bool(settings.sarvam_api_key),
         "has_groq": bool(settings.groq_api_key),
-        "has_deepgram": bool(settings.deepgram_api_key),
-        "has_elevenlabs": bool(settings.elevenlabs_api_key)
+        "llm_model": settings.llm_model,
+        "speech_provider": "sarvam",
+        "sarvam_stt_model": settings.sarvam_stt_model,
+        "sarvam_tts_model": settings.sarvam_tts_model,
+        "configuration_source": "server environment",
     }
-
-@router.post("/config")
-def update_config(payload: ConfigSchema):
-    """
-    Updates configuration variables and saves to disk config.json.
-    """
-    update_data = payload.model_dump()
-    
-    # Do not overwrite if string is masked
-    settings = config_manager.settings
-    if payload.groq_api_key.endswith("****") or not payload.groq_api_key:
-        update_data.pop("groq_api_key", None)
-    if payload.deepgram_api_key.endswith("****") or not payload.deepgram_api_key:
-        update_data.pop("deepgram_api_key", None)
-    if payload.elevenlabs_api_key.endswith("****") or not payload.elevenlabs_api_key:
-        update_data.pop("elevenlabs_api_key", None)
-    if payload.twilio_auth_token.endswith("****") or not payload.twilio_auth_token:
-        update_data.pop("twilio_auth_token", None)
-    config_manager.save_config(update_data)
-    return {"success": True, "message": "Configuration updated and saved to config.json."}

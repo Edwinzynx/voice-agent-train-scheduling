@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { Database, FileText, CheckCircle, XCircle, Search, RefreshCw, Layers } from 'lucide-react'
 
-export default function CallLogger({ backendUrl, activeCallData }) {
+export default function CallLogger({ backendUrl, activeCallData, adminToken }) {
   const [calls, setCalls] = useState([])
   const [selectedCall, setSelectedCall] = useState(null)
   const [search, setSearch] = useState('')
@@ -12,7 +12,7 @@ export default function CallLogger({ backendUrl, activeCallData }) {
   const fetchCalls = async () => {
     setLoading(true)
     try {
-      const res = await fetch(`${backendUrl}/dashboard/calls?page=${page}&limit=5&search=${search}`)
+      const res = await fetch(`${backendUrl}/dashboard/calls?page=${page}&limit=5&search=${encodeURIComponent(search)}`, { headers: { Authorization: `Bearer ${adminToken}` } })
       if (res.ok) {
         const data = await res.json()
         setCalls(data.calls)
@@ -26,11 +26,11 @@ export default function CallLogger({ backendUrl, activeCallData }) {
 
   useEffect(() => {
     fetchCalls()
-  }, [backendUrl, page, search])
+  }, [backendUrl, page, search, adminToken])
 
   const selectCall = async (callId) => {
     try {
-      const res = await fetch(`${backendUrl}/dashboard/calls/${callId}`)
+      const res = await fetch(`${backendUrl}/dashboard/calls/${callId}`, { headers: { Authorization: `Bearer ${adminToken}` } })
       if (res.ok) {
         const data = await res.json()
         setSelectedCall(data)

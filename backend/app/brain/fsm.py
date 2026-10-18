@@ -1,7 +1,9 @@
 import time
 import logging
+import re
 from ..tools import irctc, sms
 from .llm import run_brain_step
+from .validation import REQUIRED_SLOTS, confirmation_decision, date_expression, normalize_date
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,9 @@ class SessionState:
         self.latencies = []
         self.start_time = time.time()
         self.booking_success = False
+        self.available_trains = []
+        self.last_action_result = None
+        self.search_key = None
         
     def add_history(self, direction: str, text: str, latency_ms: float = 0.0):
         self.history.append({
@@ -69,6 +74,14 @@ class FSMCoordinator:
         """
         start_time = time.time()
         session = self.get_or_create_session(session_id)
+        session.last_action_result = None
+        if session.state == "INTENT" and session.available_trains:
+            named = any(t.get("name") and t["name"].casefold() in user_input.casefold() for t in session.available_trains)
+            numbered = re.search(r"\b\d{5}\b", user_input)
+            ordinal = re.fullmatch(r"(?:choose |select |the |option |train )*(first|second|third|fourth|1st|2nd|3rd|4th)(?: one| option| train| please)*[.!]?", user_input.strip().lower())
+            if named or numbered or ordinal:
+                session.intent = "CHECK_SEAT"
+                session.state = "COLLECT"
         
         # Log inbound message
         session.add_history("inbound", user_input)
@@ -108,18 +121,24 @@ class FSMCoordinator:
                 # 2. Direct bypass check: did the user ignore language question and speak their request directly?
                 result = run_brain_step("INTENT", user_input, {})
                 intent = result.get("intent", "UNKNOWN")
-                if intent != "UNKNOWN":
+                if intent == "END_CONVERSATION":
+                    session.state = "END"
+                    return "Thank you for using LocoVoice. Goodbye!"
+                if intent in REQUIRED_SLOTS:
+                    unavailable = self._unavailable_intent(intent)
+                    if unavailable:
+                        session.state = "INTENT"
+                        return unavailable
                     session.intent = intent
                     session.dialect = result.get("language_detected", "Hinglish")
                     session.language_selected = True
                     session.state = "COLLECT"
                     collect_result = run_brain_step("COLLECT", user_input, {"slots": session.slots, "intent": session.intent, "dialect": session.dialect})
-                    session.slots = collect_result.get("slots", session.slots)
+                    collect_result = self._validate_collection(session, user_input, collect_result)
                     
                     if collect_result.get("all_slots_filled", False):
                         session.state = "CONFIRM"
-                        confirm_result = run_brain_step("CONFIRM", "", {"slots": session.slots, "dialect": session.dialect, "intent": session.intent})
-                        response_text = confirm_result.get("response", "Please confirm details.")
+                        response_text = self._confirmation_prompt(session)
                     else:
                         response_text = collect_result.get("next_question", "Please provide details.")
                 else:
@@ -142,7 +161,10 @@ class FSMCoordinator:
                     response_text = "Train booking agent ko use karne ke liye thank you. Have a great day! Bye bye!"
                 else:
                     response_text = "Thank you for using our train booking service. Have a wonderful day and a safe journey! Goodbye."
-            elif intent != "UNKNOWN":
+            elif intent in REQUIRED_SLOTS:
+                unavailable = self._unavailable_intent(intent)
+                if unavailable:
+                    return unavailable
                 # Preserve slots if transitioning from FIND_TRAINS to BOOK_TICKET
                 prev_source = session.slots.get("source")
                 prev_destination = session.slots.get("destination")
@@ -171,18 +193,18 @@ class FSMCoordinator:
                         "train_no": None
                     }
                 
-                session.available_trains = []
+                if intent != "BOOK_TICKET":
+                    session.available_trains = []
                 session.last_action_result = None
                 session.state = "COLLECT"
                 # Seed slots using this initial turn input
                 collect_result = run_brain_step("COLLECT", user_input, {"slots": session.slots, "intent": session.intent, "dialect": session.dialect})
-                session.slots = collect_result.get("slots", session.slots)
+                collect_result = self._validate_collection(session, user_input, collect_result)
                 
                 if collect_result.get("all_slots_filled", False):
                     session.state = "CONFIRM"
                     # Generate confirmation question
-                    confirm_result = run_brain_step("CONFIRM", "", {"slots": session.slots, "dialect": session.dialect, "intent": session.intent})
-                    response_text = confirm_result.get("response", "Please confirm details.")
+                    response_text = self._confirmation_prompt(session)
                 else:
                     response_text = collect_result.get("next_question", "Please provide details.")
             else:
@@ -228,6 +250,9 @@ class FSMCoordinator:
                 return response_text
                 
             elif should_switch_intent and new_intent != session.intent:
+                unavailable = self._unavailable_intent(new_intent)
+                if unavailable:
+                    return unavailable
                 prev_source = session.slots.get("source")
                 prev_destination = session.slots.get("destination")
                 prev_date = session.slots.get("date")
@@ -257,38 +282,7 @@ class FSMCoordinator:
                 session.available_trains = []
                 session.last_action_result = None
                 
-            # If source and destination stations are available, let's query trains to inject into context
-            available_trains = []
-            if session.slots.get("source") and session.slots.get("destination"):
-                try:
-                    res = irctc.find_trains(session.slots["source"], session.slots["destination"], session.slots.get("date") or "tomorrow")
-                    if res.get("success"):
-                        trains = res.get("trains", [])
-                        for t in trains:
-                            class_details = {}
-                            for class_code in t.get("classes", []):
-                                try:
-                                    avail = irctc.check_seat_availability(
-                                        train_no=t["no"],
-                                        date=session.slots.get("date") or "tomorrow",
-                                        class_code=class_code,
-                                        src=session.slots["source"],
-                                        dst=session.slots["destination"],
-                                        train_data=t.get("raw_train_data")
-                                    )
-                                    if avail.get("success"):
-                                        class_details[class_code] = {
-                                            "seats": avail.get("seats_available", 0),
-                                            "status": avail.get("status", "AVAILABLE"),
-                                            "price": avail.get("price", 0.0)
-                                        }
-                                except Exception as e:
-                                    logger.error(f"Error checking class details in FSM: {e}")
-                            t["class_details"] = class_details
-                        available_trains = trains
-                except Exception as e:
-                    logger.error(f"Error querying available trains for session context: {e}")
-                    
+            available_trains = session.available_trains
             context = {
                 "slots": session.slots,
                 "intent": session.intent,
@@ -298,39 +292,42 @@ class FSMCoordinator:
             session.available_trains = available_trains
             # Fill remaining slots
             collect_result = run_brain_step("COLLECT", user_input, context)
-            session.slots = collect_result.get("slots", session.slots)
+            collect_result = self._validate_collection(session, user_input, collect_result)
             
             if collect_result.get("all_slots_filled", False):
                 session.state = "CONFIRM"
-                session.available_trains = []
-                confirm_result = run_brain_step("CONFIRM", "", {"slots": session.slots, "dialect": session.dialect, "intent": session.intent})
-                response_text = confirm_result.get("response", "Please confirm details.")
+                response_text = self._confirmation_prompt(session)
             else:
                 response_text = collect_result.get("next_question", "Please provide details.")
                 
         elif session.state == "CONFIRM":
             # Run confirmation evaluation
-            confirm_result = run_brain_step("CONFIRM", user_input, {"slots": session.slots, "dialect": session.dialect, "intent": session.intent})
-            is_confirmed = confirm_result.get("is_confirmed", None)
+            is_confirmed = confirmation_decision(user_input)
             
             if is_confirmed is True:
                 # Transition to EXECUTE
                 session.state = "EXECUTE"
-                session.available_trains = []
                 response_text = self._execute_tool(session)
             elif is_confirmed is False:
-                # Transition to END
-                session.state = "END"
-                session.available_trains = []
-                if session.dialect == "Hindi":
-                    response_text = "Request cancel kar di gayi hai. Dhanyawaad."
-                elif session.dialect == "Hinglish":
-                    response_text = "Theek hai, process cancel kar diya hai. Thank you!"
-                else:
-                    response_text = "Okay, the process has been cancelled. Thank you."
+                session.state = "COLLECT"
+                response_text = "I haven't proceeded. Which detail would you like to change?"
+                if re.search(r"change|instead|actually|correct|replace|badal|बदल", user_input, re.I) or date_expression(user_input):
+                    result = run_brain_step("COLLECT", user_input, {"slots": session.slots, "intent": session.intent, "dialect": session.dialect, "available_trains": session.available_trains})
+                    result = self._validate_collection(session, user_input, result)
+                    response_text = result.get("next_question", response_text)
+                    if result.get("all_slots_filled"):
+                        session.state = "CONFIRM"
+                        response_text = self._confirmation_prompt(session)
             else:
-                # Repeat confirmation prompt
-                response_text = confirm_result.get("response", "Shall I proceed?")
+                response_text = "I haven't proceeded. Please say yes to confirm, or tell me which detail to change."
+                if date_expression(user_input) or re.search(r"\b(?:my name|from|to|class|train \d{5})\b", user_input, re.I):
+                    session.state = "COLLECT"
+                    result = run_brain_step("COLLECT", user_input, {"slots": session.slots, "intent": session.intent, "dialect": session.dialect, "available_trains": session.available_trains})
+                    result = self._validate_collection(session, user_input, result)
+                    response_text = result.get("next_question", response_text)
+                    if result.get("all_slots_filled"):
+                        session.state = "CONFIRM"
+                        response_text = self._confirmation_prompt(session)
                 
         elif session.state == "EXECUTE":
             # Safeguard if reached directly
@@ -352,6 +349,111 @@ class FSMCoordinator:
         
         return response_text
 
+    def _confirmation_prompt(self, session):
+        details = ", ".join(f"{key.replace('_', ' ')}: {session.slots[key]}" for key in REQUIRED_SLOTS[session.intent])
+        action = session.intent.lower().replace("_", " ")
+        if session.dialect == "Hindi":
+            return f"कृपया पुष्टि करें: {action}, {details}। क्या मैं आगे बढ़ूँ?"
+        if session.dialect == "Hinglish":
+            return f"Please confirm karein: {action}, {details}. Kya main proceed karun?"
+        return f"Please confirm {action}: {details}. Shall I proceed?"
+
+    def _unavailable_intent(self, intent):
+        features = {"BOOK_TICKET": "Ticket booking", "CANCEL_TICKET": "Ticket cancellation", "GET_PNR_STATUS": "PNR and running status"}
+        if intent in features and not irctc.simulation_enabled():
+            return irctc.service_unavailable(features[intent])["error"]
+        return None
+
+    def _validate_collection(self, session, user_input, result):
+        previous = session.slots.copy()
+        proposed = result.get("slots")
+        if not isinstance(proposed, dict):
+            raise RuntimeError("The conversation service returned invalid details. Please try again.")
+        slots = previous.copy()
+        for key in previous:
+            value = proposed.get(key)
+            if isinstance(value, (str, int)) and str(value).strip().lower() not in ("", "none", "null"):
+                slots[key] = str(value).strip()
+        session.slots = slots
+        error = None
+        expression = date_expression(user_input)
+        if expression or slots.get("date"):
+            try:
+                slots["date"] = normalize_date(expression or slots["date"])
+            except ValueError as exc:
+                slots["date"] = None
+                error = str(exc)
+        changed = any(previous.get(k) != slots.get(k) for k in ("source", "destination", "date"))
+        if changed:
+            session.available_trains = []
+            session.search_key = None
+        # Preserve only a previous choice or a train explicitly named in this turn.
+        slots["train_no"] = None if changed else previous.get("train_no")
+        match = re.search(r"\b\d{5}\b", user_input)
+        if match:
+            slots["train_no"] = match.group(0)
+        else:
+            matches = [t for t in session.available_trains if t.get("name") and t["name"].casefold() in user_input.casefold()]
+            if len(matches) == 1:
+                slots["train_no"] = str(matches[0]["no"])
+            ordinal = re.fullmatch(r"(?:choose |select |book |the |option |train )*(first|second|third|fourth|1st|2nd|3rd|4th|pehli|dusri|teesri|chauthi)(?: one| option| train| please| wala| wali)*[.!]?", user_input.strip().lower())
+            if ordinal:
+                indexes = {"first": 0, "1st": 0, "pehli": 0, "second": 1, "2nd": 1, "dusri": 1, "third": 2, "3rd": 2, "teesri": 2, "fourth": 3, "4th": 3, "chauthi": 3}
+                options = [(str(t["no"]), code) for t in session.available_trains for code in t.get("classes", [])][:4]
+                index = indexes[ordinal.group(1)]
+                if index < len(options):
+                    slots["train_no"], slots["class_code"] = options[index]
+        if slots.get("class_code"):
+            slots["class_code"] = slots["class_code"].upper()
+        explicit_class = re.search(r"\bclass\s+(1A|2A|3A|3E|SL|CC|EC|2S)\b", user_input, re.I)
+        if explicit_class:
+            slots["class_code"] = explicit_class.group(1).upper()
+        if not error and session.intent in ("BOOK_TICKET", "CHECK_SEAT"):
+            error = self._validate_selected_train(session)
+        missing = [k for k in REQUIRED_SLOTS.get(session.intent, []) if not slots.get(k)]
+        result["slots"] = slots
+        result["all_slots_filled"] = not missing and not error
+        if error:
+            result["next_question"] = error
+        elif missing and missing[0] == "train_no":
+            result["next_question"] = "Please choose a train from the results, or say its five-digit train number."
+        return result
+
+    def _validate_selected_train(self, session, refresh=False):
+        slots = session.slots
+        key = tuple(slots.get(k) for k in ("source", "destination", "date"))
+        if not all(key):
+            return None
+        if refresh or session.search_key != key or not session.available_trains:
+            result = irctc.find_trains(*key)
+            if not result.get("success"):
+                session.available_trains = []
+                session.search_key = None
+                return result.get("error", "Train search is temporarily unavailable.")
+            session.available_trains = result["trains"]
+            session.search_key = key
+        if slots.get("train_no"):
+            selected = next((t for t in session.available_trains if str(t["no"]) == slots["train_no"]), None)
+            if not selected:
+                slots["train_no"] = None
+                return "That train is not available for this route and date. Please select a listed train."
+            if slots.get("class_code") and slots["class_code"] not in selected.get("classes", []):
+                slots["class_code"] = None
+                return "That class is not offered on this train. Please select one of its listed classes."
+        return None
+
+    def select_train(self, session_id, train_no, class_code):
+        session = self.get_or_create_session(session_id)
+        selected = next((t for t in session.available_trains if str(t["no"]) == str(train_no)), None)
+        if not selected or class_code not in selected.get("classes", []):
+            raise ValueError("That selection is no longer available. Please search again.")
+        if session.state not in ("INTENT", "COLLECT", "CONFIRM"):
+            raise ValueError("Please search trains before making a selection.")
+        if session.intent == "FIND_TRAINS":
+            session.intent = "CHECK_SEAT"
+        session.state = "COLLECT"
+        return self.process_turn(session_id, f"Choose train {train_no} class {class_code}")
+
     def _execute_tool(self, session: SessionState) -> str:
         """
         Executes the backend tools based on filled slots and current intent.
@@ -360,19 +462,35 @@ class FSMCoordinator:
         intent = session.intent
         slots = session.slots
         result = {}
+        missing = [key for key in REQUIRED_SLOTS.get(intent, []) if not slots.get(key)]
+        if missing:
+            session.state = "COLLECT"
+            return f"Please provide {missing[0].replace('_', ' ')} before proceeding."
+        try:
+            if slots.get("date"):
+                slots["date"] = normalize_date(slots["date"])
+        except ValueError as exc:
+            session.state = "COLLECT"
+            session.slots["date"] = None
+            return str(exc)
+        if intent in ("BOOK_TICKET", "CHECK_SEAT"):
+            error = self._validate_selected_train(session, refresh=True)
+            if error:
+                session.state = "COLLECT"
+                return error
         
         try:
             if intent == "BOOK_TICKET":
                 # Create passengers structure
-                passenger = {"name": slots.get("passenger_name", "Unknown"), "age": 30, "gender": "M"}
+                passenger = {"name": slots["passenger_name"]}
                 res = irctc.book_ticket(
-                    train_no=slots.get("train_no") or "12626", # Fallback to Kerala Express if missing
-                    date=slots.get("date", "2026-06-25"),
-                    class_code=slots.get("class_code", "3A"),
+                    train_no=slots["train_no"],
+                    date=slots["date"],
+                    class_code=slots["class_code"],
                     passengers=[passenger],
                     payment_confirmed=True,
-                    src=slots.get("source") or "Delhi",
-                    dst=slots.get("destination") or "Mumbai"
+                    src=slots["source"],
+                    dst=slots["destination"]
                 )
                 if res.get("success", False):
                     result = res["booking"]
@@ -390,7 +508,7 @@ class FSMCoordinator:
                 
             elif intent == "CHECK_SEAT":
                 result = irctc.check_seat_availability(
-                    train_no=slots.get("train_no") or "12626",
+                    train_no=slots["train_no"],
                     date=slots.get("date"),
                     class_code=slots.get("class_code", "3A"),
                     src=slots.get("source"),
@@ -411,7 +529,7 @@ class FSMCoordinator:
                 if pnr:
                     result = irctc.get_pnr_status(pnr)
                 else:
-                    result = irctc.get_live_train_info(slots.get("train_no") or "12626")
+                    result = {"success": False, "error": "Please provide a PNR number."}
                     
         except Exception as e:
             logger.error(f"Error executing tool in FSM: {e}")
@@ -419,10 +537,17 @@ class FSMCoordinator:
             
         session.last_action_result = result
         session.state = "INTENT"
-        session.available_trains = []
+        session.available_trains = result.get("trains", [])
+        if result.get("success"):
+            session.booking_success = True
+        if result.get("error") or result.get("success") is False:
+            return result.get("error", "The action could not be completed.")
         
         # Synthesize final message using LLM
-        exec_result = run_brain_step("EXECUTE", "", {"result": result, "dialect": session.dialect})
+        try:
+            exec_result = run_brain_step("EXECUTE", "", {"result": result, "dialect": session.dialect})
+        except RuntimeError:
+            return "The result is displayed on screen. The spoken explanation is temporarily unavailable."
         return exec_result.get("response", f"Action complete. Details: {result}")
 
 fsm_coordinator = FSMCoordinator()

@@ -34,13 +34,13 @@ Do not lose previously extracted slots unless the user corrects them.
 
 Required Slots by Intent:
 - FIND_TRAINS: {source, destination, date}
-- CHECK_SEAT: {train_no, date, class_code}  (class_code options: 1A, 2A, 3A, SL, CC, EC)
-- BOOK_TICKET: {source, destination, date, class_code, passenger_name}
+- CHECK_SEAT: {source, destination, date, train_no, class_code}  (class_code options: 1A, 2A, 3A, SL, CC, EC)
+- BOOK_TICKET: {source, destination, date, train_no, class_code, passenger_name}
 - CANCEL_TICKET: {pnr_number}
 - GET_PNR_STATUS: {pnr_number}
 
 Analyze the user's latest message. Extract new slot values. Output the full current slots object in JSON.
-If a slot is missing or empty, do not hallucinate it. Leave it null.
+If a slot is missing or empty, do not hallucinate it. Leave it null. Never choose a train for the user; extract train_no only when they explicitly select a numbered train, a named train, or an option from Available Trains. A route or date correction invalidates the previous train selection.
 
 DIALECT & QUESTION INSTRUCTIONS:
 - You MUST generate the "next_question" strictly in the selected dialect: {dialect}.

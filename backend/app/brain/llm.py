@@ -6,6 +6,7 @@ from groq import Groq
 from ..config import config_manager
 from .prompts import INTENT_SYSTEM_PROMPT, SLOT_FILLER_SYSTEM_PROMPT, CONFIRMATION_SYSTEM_PROMPT, EXECUTE_SYSTEM_PROMPT
 from ..tools import irctc
+from .validation import REQUIRED_SLOTS, confirmation_decision, date_expression, normalize_date, today_in_india
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +20,9 @@ def call_groq_json(system_prompt: str, user_prompt: str, api_key: str) -> dict:
     """
     import time
     model_name = config_manager.settings.llm_model or "llama-3.3-70b-versatile"
-    client = Groq(api_key=api_key)
+    client = Groq(api_key=api_key, timeout=15.0, max_retries=0)
     
-    max_retries = 8
+    max_retries = 2
     
     for attempt in range(max_retries):
         try:
@@ -43,7 +44,7 @@ def call_groq_json(system_prompt: str, user_prompt: str, api_key: str) -> dict:
             
             if is_rate_limit and attempt < max_retries - 1:
                 # Sleep a flat 25 seconds to clear a major chunk of the rolling 1-minute window
-                sleep_time = 25.0
+                sleep_time = 1.0
                 logger.warning(f"Groq API rate limit hit. Retrying in {sleep_time:.1f}s... Error: {e}")
                 time.sleep(sleep_time)
             else:
@@ -297,24 +298,21 @@ def mock_fill_slots(user_input: str, current_slots: dict, intent: str, dialect: 
                 slots["passenger_name"] = candidate.title()
 
     # Extract Date: tomorrow, today, or general string
-    if "tomorrow" in text or "kal" in text:
-        slots["date"] = "2026-06-19" # hardcode mock tomorrow relative to current date (Jun 18 2026)
-    elif "today" in text or "aaj" in text:
-        slots["date"] = "2026-06-18"
-    elif not slots.get("date"):
-        # Match something like "25th june"
-        date_exp = re.search(r"\b\d{1,2}(?:th|st|nd|rd)?\s+(?:june|july|august|september)\b", text)
-        if date_exp:
-            slots["date"] = date_exp.group(0).title()
+    expression = date_expression(text)
+    if expression:
+        try:
+            slots["date"] = normalize_date(expression)
+        except ValueError:
+            slots["date"] = expression  # Shared FSM validation explains the invalid input.
 
     # Check which slots are missing depending on intent
     required = []
     if intent == "BOOK_TICKET":
-        required = ["source", "destination", "date", "class_code", "passenger_name"]
+        required = REQUIRED_SLOTS["BOOK_TICKET"]
     elif intent == "FIND_TRAINS":
         required = ["source", "destination", "date"]
     elif intent == "CHECK_SEAT":
-        required = ["train_no", "date", "class_code"]
+        required = REQUIRED_SLOTS["CHECK_SEAT"]
     elif intent == "CANCEL_TICKET" or intent == "GET_PNR_STATUS":
         required = ["pnr_number"]
     elif intent == "END_CONVERSATION":
@@ -388,7 +386,7 @@ def run_mock_brain_step(state: str, user_input: str, context: dict) -> dict:
         return mock_fill_slots(user_input, context.get("slots", {}), context.get("intent", ""), context.get("dialect", "Hinglish"), context)
     elif state == "CONFIRM":
         text = user_input.lower()
-        is_confirmed = True if any(word in text for word in ["yes", "haan", "sure", "confirm", "theek", "okay"]) else False if any(word in text for word in ["no", "na", "cancel", "nahi", "galat"]) else None
+        is_confirmed = confirmation_decision(text)
         
         intent = context.get("intent", "UNKNOWN")
         if is_confirmed:
@@ -412,6 +410,9 @@ def run_mock_brain_step(state: str, user_input: str, context: dict) -> dict:
             "is_confirmed": is_confirmed
         }
     elif state == "EXECUTE" or state == "END":
+        result = context.get("result", {})
+        if result.get("error") or result.get("success") is False:
+            return {"response": result.get("error", "The action could not be completed. Please try again.")}
         # Just return a greeting or completion string
         return {
             "response": f"Wonderful, everything is successfully processed! Details: {context.get('result', '')}. Have a safe journey!"
@@ -426,8 +427,10 @@ def run_brain_step(state: str, user_input: str, context: dict) -> dict:
     """
     settings = config_manager.settings
     
-    if settings.use_mock_llm:
+    if settings.use_mock_llm and settings.environment != "production":
         return run_mock_brain_step(state, user_input, context)
+    if not settings.groq_api_key:
+        raise RuntimeError("Conversation service is not configured. Set GROQ_API_KEY on the server.")
 
     # Real LLM Call using Groq
     api_key = settings.groq_api_key
@@ -436,7 +439,7 @@ def run_brain_step(state: str, user_input: str, context: dict) -> dict:
             return call_groq_json(INTENT_SYSTEM_PROMPT, f"User message: {user_input}", api_key)
         elif state == "COLLECT":
             import datetime
-            current_date = datetime.date.today().strftime("%Y-%m-%d")
+            current_date = today_in_india().isoformat()
             dialect = context.get("dialect", "Hinglish")
             formatted_prompt = SLOT_FILLER_SYSTEM_PROMPT.replace("{dialect}", dialect)
             available_trains = context.get("available_trains", [])
@@ -478,11 +481,11 @@ def run_brain_step(state: str, user_input: str, context: dict) -> dict:
             intent = context.get("intent", "")
             required_slots = []
             if intent == "BOOK_TICKET":
-                required_slots = ["source", "destination", "date", "class_code", "passenger_name"]
+                required_slots = REQUIRED_SLOTS["BOOK_TICKET"]
             elif intent == "FIND_TRAINS":
                 required_slots = ["source", "destination", "date"]
             elif intent == "CHECK_SEAT":
-                required_slots = ["train_no", "date", "class_code"]
+                required_slots = REQUIRED_SLOTS["CHECK_SEAT"]
             elif intent == "CANCEL_TICKET" or intent == "GET_PNR_STATUS":
                 required_slots = ["pnr_number"]
             elif intent == "END_CONVERSATION":
@@ -516,6 +519,9 @@ def run_brain_step(state: str, user_input: str, context: dict) -> dict:
             formatted_prompt = EXECUTE_SYSTEM_PROMPT.replace("{result}", json.dumps(res_obj)).replace("{dialect}", context.get("dialect", "Hinglish"))
             return call_groq_json(formatted_prompt, user_prompt, api_key)
     except Exception as e:
+        if settings.environment == "production":
+            logger.warning("Conversation provider failed (%s)", type(e).__name__)
+            raise RuntimeError("The conversation service is temporarily unavailable. Please try again.") from e
         logger.error(f"Groq execution failed, falling back to mock brain state runner. Error: {e}")
         # Fall back to mock runner for this step, but do not set settings.use_mock_llm permanently.
         return run_mock_brain_step(state, user_input, context)

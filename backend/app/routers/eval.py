@@ -2,16 +2,21 @@ import json
 import uuid
 import time
 import asyncio
+import logging
 from datetime import datetime
 from fastapi import APIRouter, Depends, BackgroundTasks
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import EvalRun
 from ..brain.fsm import FSMCoordinator
+from ..auth import require_admin
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/eval",
-    tags=["eval"]
+    tags=["eval"],
+    dependencies=[Depends(require_admin)],
 )
 
 from pathlib import Path
