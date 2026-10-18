@@ -5,7 +5,7 @@ from difflib import SequenceMatcher
 
 def normalized_name(text):
     words = re.findall(r'[a-z0-9]+', str(text).casefold())
-    aliases = {'exp': 'express', 'sf': 'superfast', 'spl': 'special'}
+    aliases = {'exp': 'express', 'ex': 'express', 'sf': 'superfast', 'spl': 'special'}
     return ' '.join(aliases.get(word, word) for word in words)
 
 
@@ -38,6 +38,19 @@ def match_train(text, trains):
 
 def filler_only(text):
     return bool(re.fullmatch(r'(?:uh|um|umm|erm|hmm|हम्म|उह|अं)(?:[\s.,!?।]*)', text.strip(), re.I))
+
+
+def train_option_index(text):
+    """Spoken positions refer to train cards, never flattened class choices."""
+    query = text.strip().lower().rstrip('.!?।')
+    numeric = re.fullmatch(r'(?:choose |select |the )*(?:option|train)\s+(\d{1,3})(?: please)?', query)
+    if numeric:
+        return int(numeric.group(1)) - 1
+    ordinal = re.fullmatch(r'(?:choose |select |book |the |option |train )*(first|second|third|fourth|1st|2nd|3rd|4th|pehli|dusri|teesri|chauthi)(?: one| option| train| please| wala| wali)*', query)
+    if ordinal:
+        return {'first': 0, '1st': 0, 'pehli': 0, 'second': 1, '2nd': 1, 'dusri': 1,
+                'third': 2, '3rd': 2, 'teesri': 2, 'fourth': 3, '4th': 3, 'chauthi': 3}[ordinal.group(1)]
+    return None
 
 
 def selected_class(text):

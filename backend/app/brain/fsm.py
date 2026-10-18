@@ -3,9 +3,9 @@ import logging
 import re
 from ..tools import irctc, sms
 from .llm import run_brain_step
-from .results import result_summary, schedule_followup
+from .results import result_summary, schedule_followup, listed_train_followup
 from .language import choose, class_name, missing_question, surface_text
-from .selection import match_train, filler_only, selected_class
+from .selection import match_train, filler_only, selected_class, train_option_index
 from .validation import REQUIRED_SLOTS, confirmation_decision, date_expression, normalize_date
 
 logger = logging.getLogger(__name__)
@@ -94,6 +94,13 @@ class FSMCoordinator:
         start_time = time.time()
         session = self.get_or_create_session(session_id)
         session.last_action_result = None
+        if session.state in ("INTENT", "COLLECT", "CONFIRM") and session.available_trains:
+            answer = listed_train_followup(user_input, session.available_trains, session.slots, session.dialect)
+            if answer:
+                session.add_history("inbound", user_input)
+                return answer
+        if session.state in ("INTENT", "COLLECT") and session.available_trains and train_option_index(user_input) is not None:
+            return self._collect_selection(session, user_input)
         # Repeated approval after a completed action is not a new task.
         if session.state == "INTENT" and session.completed_response and confirmation_decision(user_input) is True:
             return session.completed_response
@@ -502,13 +509,14 @@ class FSMCoordinator:
             selected, _ = match_train(user_input, session.available_trains)
             if selected:
                 slots["train_no"] = str(selected["no"])
-            ordinal = re.fullmatch(r"(?:choose |select |book |the |option |train )*(first|second|third|fourth|1st|2nd|3rd|4th|pehli|dusri|teesri|chauthi)(?: one| option| train| please| wala| wali)*[.!]?", user_input.strip().lower())
-            if ordinal:
-                indexes = {"first": 0, "1st": 0, "pehli": 0, "second": 1, "2nd": 1, "dusri": 1, "third": 2, "3rd": 2, "teesri": 2, "fourth": 3, "4th": 3, "chauthi": 3}
-                options = [(str(t["no"]), code) for t in session.available_trains for code in t.get("classes", [])][:4]
-                index = indexes[ordinal.group(1)]
-                if index < len(options):
-                    slots["train_no"], slots["class_code"] = options[index]
+            index = train_option_index(user_input)
+            if index is not None:
+                if 0 <= index < len(session.available_trains):
+                    slots["train_no"] = str(session.available_trains[index]["no"])
+                    slots["class_code"] = None
+                else:
+                    error = choose(session.dialect, "That train option isn't listed. Please choose a displayed train.",
+                                   "यह ट्रेन विकल्प सूची में नहीं है। कृपया सूची से ट्रेन चुनें।")
         explicit_code = selected_class(user_input)
         if explicit_code:
             slots["class_code"] = explicit_code

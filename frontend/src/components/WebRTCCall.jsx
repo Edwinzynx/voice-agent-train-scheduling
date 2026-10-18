@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { ArrowRight, Clock, MessageSquare, Mic, MicOff, PhoneOff, Send, Train, Volume2 } from 'lucide-react'
 import useVoiceCall from './useVoiceCall'
+import TrainOptions from './TrainOptions'
 import './VoicePlayground.css'
 
 const queries = [
@@ -8,13 +9,6 @@ const queries = [
   'Find trains from Mumbai to Pune tomorrow',
   'Check seat availability from Chennai to Bangalore tomorrow',
 ]
-
-function displayDate(value) {
-  if (!value) return 'Date not selected'
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T12:00:00+05:30`) : null
-  return date && !Number.isNaN(date.getTime())
-    ? date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }) : value
-}
 
 export default function WebRTCCall({ backendUrl, onCallStateChange }) {
   const call = useVoiceCall(backendUrl, onCallStateChange)
@@ -78,21 +72,8 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
             {!transcript.length && <div className="conversation-welcome"><div className="welcome-icon"><Train size={30} /></div><h3>Where are you headed?</h3><p>Choose a query to get started, or tell LocoVoice about your journey.</p><span>English · हिंदी · Hinglish</span></div>}
             {transcript.map((message, index) => <React.Fragment key={index}>
               <div className={`bubble ${message.sender}`}><span className="message-speaker">{message.sender === 'agent' ? 'LocoVoice' : 'You'}</span>{message.text}</div>
-              {index === latestAgentIndex && message.availableTrains?.length > 0 && <div className="train-options" aria-label="Train options">
-                <span className="train-options-title">Choose a train & class to check seats</span>
-                {message.availableTrains.flatMap(train => (train.classes || []).map(classCode => ({ train, classCode }))).slice(0, 4).map(({ train, classCode }, option) => {
-                  const info = train.class_details?.[classCode] || {}
-                  return <button className="train-option" key={`${train.no}-${classCode}`} disabled={!inCall || !canSend} onClick={() => selectTrain(train, classCode)}>
-                    <span className="train-option-heading"><span>Option {option + 1} · {train.no}</span><strong>{classCode}</strong></span>
-                    <strong>{train.name || train.no}</strong>
-                    <span>{train.src || message.slots?.source || 'Origin unavailable'} → {train.dst || message.slots?.destination || 'Destination unavailable'}</span>
-                    <span>{displayDate(message.slots?.date)}</span>
-                    <span>{train.dep || 'Time unavailable'} → {train.arr || 'Time unavailable'}</span>
-                    <span className="train-availability">{info.status || 'Availability not returned'}{info.seats != null ? ` · ${info.seats} seats` : ''}{info.price != null ? ` · ₹${info.price}` : ''}</span>
-                    <span className="train-option-action">Select & review <ArrowRight size={14} /></span>
-                  </button>
-                })}
-              </div>}
+              {index === latestAgentIndex && message.availableTrains?.length > 0 && <TrainOptions
+                trains={message.availableTrains} slots={message.slots} disabled={!inCall || !canSend} onSelect={selectTrain} />}
             </React.Fragment>)}
             {isProcessing && <div className="bubble agent typing-indicator" aria-label="Agent is responding"><i /><i /><i /></div>}
           </div>

@@ -47,11 +47,15 @@
 .typing-indicator i:nth-child(3) { animation-delay: .3s; }
 .train-options { display: grid; gap: 10px; flex-shrink: 0; }
 .train-options-title { color: var(--text-secondary); font-size: .68rem; }
-.train-option { display: flex; flex-direction: column; gap: 7px; width: 100%; padding: 14px; text-align: left; border: 1px solid #6366f14d; border-radius: 14px; background: linear-gradient(140deg, #6366f11f, #a855f70d); color: var(--text-primary); cursor: pointer; font: .72rem/1.45 var(--font-family); }
+.train-option { display: flex; flex-direction: column; gap: 7px; width: 100%; padding: 14px; text-align: left; border: 1px solid #6366f14d; border-radius: 14px; background: linear-gradient(140deg, #6366f11f, #a855f70d); color: var(--text-primary); font: .72rem/1.45 var(--font-family); }
 .train-option-heading { display: flex; justify-content: space-between; color: #c4b5fd; font-size: .65rem; }
 .train-option > strong { font-size: .82rem; }
 .train-availability { color: var(--text-secondary); }
-.train-option-action { border-top: 1px solid var(--border-color); padding-top: 8px; display: flex; justify-content: space-between; color: #c7d2fe; }
+.train-classes { display: grid; gap: 6px; margin-top: 5px; }
+.train-class { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 44px; padding: 9px; border: 1px solid var(--border-color); border-radius: 9px; background: #6366f114; color: var(--text-primary); font: inherit; text-align: left; cursor: pointer; }
+.train-class .train-availability { flex: 1; }
+.train-class:hover:not(:disabled), .train-class:focus-visible { border-color: #a5b4fc; background: #6366f12e; }
+.train-class:disabled { opacity: .55; cursor: not-allowed; }
 @media (max-width: 850px) { .voice-playground { grid-template-columns: 1fr; gap: 28px; } .live-phone { max-width: 440px; } .query-panel { padding: 24px; } }
 @media (max-width: 420px) { .query-panel { padding: 20px; } .query-panel h2 { font-size: 1.2rem; } .live-phone { border-width: 6px; border-radius: 26px; height: 620px; } .session-actions { flex-direction: column; } }
 @media (prefers-reduced-motion: reduce) { .typing-indicator i { animation: none; } }

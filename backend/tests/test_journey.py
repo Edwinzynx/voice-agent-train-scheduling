@@ -146,12 +146,12 @@ def test_live_availability_display_format():
     assert result["price"] is None and result["seats_available"] is None
 
 
-def test_ordinal_matches_displayed_train_class_options(journey):
+def test_ordinal_selects_train_and_asks_for_class(journey):
     coordinator, session = journey
     coordinator._validate_selected_train(session)
-    result = coordinator._validate_collection(session, "second one", {"slots": session.slots.copy()})
-    assert result["all_slots_filled"]
-    assert session.slots["train_no"] == "12012" and session.slots["class_code"] == "EC"
+    result = coordinator._validate_collection(session, "first one", {"slots": session.slots.copy()})
+    assert not result["all_slots_filled"]
+    assert session.slots["train_no"] == "12012" and session.slots["class_code"] is None
 
 
 def test_card_selection_starts_real_seat_check(journey, monkeypatch):
@@ -184,9 +184,9 @@ def test_spoken_ordinal_after_search(journey, monkeypatch):
     session.state = "INTENT"
     session.intent = "FIND_TRAINS"
     monkeypatch.setattr(fsm, "run_brain_step", lambda state, text, context: {"intent": "UNKNOWN"} if state == "INTENT" else {"slots": context["slots"].copy()})
-    coordinator.process_turn("test", "second one")
-    assert session.intent == "CHECK_SEAT" and session.state == "CONFIRM"
-    assert session.slots["class_code"] == "EC"
+    coordinator.process_turn("test", "first one")
+    assert session.intent == "CHECK_SEAT" and session.state == "COLLECT"
+    assert session.slots["train_no"] == "12012" and session.slots["class_code"] is None
 
 
 def test_search_summary_and_timing_followup_keep_date(journey, monkeypatch):

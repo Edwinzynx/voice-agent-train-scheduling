@@ -7,6 +7,7 @@ from ..config import config_manager
 from .prompts import INTENT_SYSTEM_PROMPT, SLOT_FILLER_SYSTEM_PROMPT, CONFIRMATION_SYSTEM_PROMPT, EXECUTE_SYSTEM_PROMPT
 from ..tools import irctc
 from .validation import REQUIRED_SLOTS, confirmation_decision, date_expression, normalize_date, today_in_india
+from .selection import train_option_index
 
 logger = logging.getLogger(__name__)
 
@@ -238,35 +239,12 @@ def mock_fill_slots(user_input: str, current_slots: dict, intent: str, dialect: 
                 elif len(candidates) == 1:
                     slots["source"] = candidates[0]
 
-    # 4. Index Selection Check
+    # Spoken positions match the grouped train cards, with class chosen separately.
     available_trains = context.get("available_trains", []) if context else []
-    if available_trains:
-        # Build options matching the frontend logic (train, class) sliced to 4 results
-        options = []
-        for train in available_trains:
-            train_no = train.get("no")
-            # Get class details keys if present, otherwise default to classes list
-            cls_keys = list(train.get("class_details", {}).keys()) if train.get("class_details") else train.get("classes", [])
-            for class_code in cls_keys:
-                options.append((train_no, class_code))
-        
-        # Limit options to top 4 to match frontend layout slice
-        options = options[:4]
-        
-        # Check text for index choices (phonetic and numeric)
-        idx = None
-        if any(contains_word_or_phrase(text, w) for w in ["first", "1st", "pehla", "pehli", "one", "number one", "option 1", "train 1", "पहला", "पहली", "एक"]):
-            idx = 0
-        elif any(contains_word_or_phrase(text, w) for w in ["second", "2nd", "dusra", "dusri", "doosra", "doosri", "two", "number two", "option 2", "train 2", "दूसरा", "दूसरी", "दो"]):
-            idx = 1
-        elif any(contains_word_or_phrase(text, w) for w in ["third", "3rd", "tisra", "tisri", "three", "number three", "option 3", "train 3", "तीसरा", "तीसरी", "तीन"]):
-            idx = 2
-        elif any(contains_word_or_phrase(text, w) for w in ["fourth", "4th", "chotha", "chautha", "chauthi", "four", "number four", "option 4", "train 4", "चौथा", "चौथी", "चार"]):
-            idx = 3
-            
-        if idx is not None and idx < len(options):
-            slots["train_no"] = options[idx][0]
-            slots["class_code"] = options[idx][1]
+    index = train_option_index(text)
+    if index is not None and 0 <= index < len(available_trains):
+        slots["train_no"] = str(available_trains[index]["no"])
+        slots["class_code"] = None
 
     # Extract class codes with friendly synonyms mapping
     class_mappings = {

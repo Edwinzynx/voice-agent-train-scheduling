@@ -1,6 +1,40 @@
 """Concise answers grounded in retrieved railway data, without another LLM call."""
 import re
 from .language import choose, class_name, expand_status
+from .selection import normalized_name
+
+
+def listed_train_followup(text, trains, slots, dialect='English'):
+    """Answer questions about a named service using this journey's full results."""
+    if not re.search(r'\b(available|availability|is there|are there|do you have|any|show|list)\b|उपलब्ध|है क्या', text, re.I):
+        return None
+    if re.search(r'\b(from|to|between|instead|change)\b|से|तक|बदल', text, re.I):
+        return None
+    from .validation import date_expression, normalize_date
+    expression = date_expression(text)
+    if expression:
+        try:
+            if normalize_date(expression) != slots.get('date'):
+                return None
+        except ValueError:
+            return None
+    query = f' {normalized_name(text)} '
+    matches = []
+    for train in trains:
+        core = ' '.join(w for w in normalized_name(train.get('name', '')).split()
+                        if w not in {'express', 'superfast', 'special', 'train', 'passenger'})
+        number = str(train.get('no', ''))
+        if (number and f' {number} ' in query) or (len(core) >= 4 and f' {core} ' in query):
+            matches.append(train)
+    if not matches:
+        return None
+    intro = choose(dialect,
+        f"Your results for {slots.get('date')} include {len(matches)} matching train(s). ",
+        f"{slots.get('date')} की सूची में आपके बताए नाम की {len(matches)} ट्रेनें हैं। ")
+    details = ' '.join(train_timing(t, dialect=dialect) for t in matches[:3])
+    instruction = choose(dialect, ' Choose the train and a class on its card to check seats.',
+                         ' सीट की उपलब्धता देखने के लिए ट्रेन के कार्ड में श्रेणी चुनें।')
+    return intro + details + instruction
 
 
 def train_timing(train, arrival=False, dialect='English'):
