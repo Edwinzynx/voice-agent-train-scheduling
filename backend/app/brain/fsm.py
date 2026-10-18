@@ -4,6 +4,8 @@ import re
 from ..tools import irctc, sms
 from .llm import run_brain_step
 from .results import result_summary, schedule_followup
+from .language import choose, class_name, missing_question, surface_text
+from .selection import match_train, filler_only, selected_class
 from .validation import REQUIRED_SLOTS, confirmation_decision, date_expression, normalize_date
 
 logger = logging.getLogger(__name__)
@@ -32,6 +34,8 @@ class SessionState:
         self.available_trains = []
         self.last_action_result = None
         self.search_key = None
+        self.pending_train = None
+        self.completed_response = None
         
     def add_history(self, direction: str, text: str, latency_ms: float = 0.0):
         self.history.append({
@@ -69,6 +73,20 @@ class FSMCoordinator:
             del self.sessions[session_id]
 
     def process_turn(self, session_id: str, user_input: str) -> str:
+        session = self.get_or_create_session(session_id)
+        if filler_only(user_input):
+            return ""
+        history_size = len(session.history)
+        answer = surface_text(self._process_turn(session_id, user_input), session.dialect)
+        if len(session.history) == history_size:
+            session.add_history("inbound", user_input)
+        if len(session.history) > history_size and session.history[-1]["direction"] == "outbound":
+            session.history[-1]["text"] = answer
+        else:
+            session.add_history("outbound", answer)
+        return answer
+
+    def _process_turn(self, session_id: str, user_input: str) -> str:
         """
         Main entry point for processing a single user turn.
         Returns the spoken response text from the agent.
@@ -76,16 +94,46 @@ class FSMCoordinator:
         start_time = time.time()
         session = self.get_or_create_session(session_id)
         session.last_action_result = None
+        # Repeated approval after a completed action is not a new task.
+        if session.state == "INTENT" and session.completed_response and confirmation_decision(user_input) is True:
+            return session.completed_response
+        if session.pending_train:
+            candidate = session.pending_train
+            session.pending_train = None
+            decision = confirmation_decision(user_input)
+            if decision is True:
+                return self._collect_selection(session, f"train {candidate['no']}")
+            if decision is False:
+                return missing_question("train_no", session.dialect)
+        if session.state in ("INTENT", "COLLECT") and session.available_trains:
+            seat_request = re.search(r'\bseat(?:s| availability)?\b|सीट|उपलब्धता', user_input, re.I)
+            new_route = re.search(r'\b(from|to|instead|change)\b|से|तक|बदल', user_input, re.I)
+            exact, suggested = match_train(user_input, session.available_trains)
+            is_question = re.search(r"\b(time|when|depart|arrive|start|why|what|which)\b|कब|कितने|कितनी", user_input, re.I)
+            if not is_question and suggested:
+                session.pending_train = suggested
+                return choose(session.dialect,
+                    f"Did you mean {suggested['name']} ({suggested['no']})? Please confirm the train name.",
+                    f"क्या आपका मतलब {suggested['name']} ({suggested['no']}) है? कृपया ट्रेन के नाम की पुष्टि करें।")
+            if not is_question and exact and not re.search(r'\b(from|to)\b|से|तक', user_input, re.I):
+                return self._collect_selection(session, user_input)
+            if session.state == "COLLECT" and session.slots.get("train_no") and selected_class(user_input):
+                return self._collect_selection(session, user_input)
+            if seat_request and not new_route and not date_expression(user_input) and session.intent in ("FIND_TRAINS", "CHECK_SEAT"):
+                session.intent = "CHECK_SEAT"
+                return self._collect_selection(session, user_input)
         if session.state in ("INTENT", "COLLECT", "CONFIRM") and session.available_trains:
-            answer = schedule_followup(user_input, session.available_trains, session.slots)
+            answer = schedule_followup(user_input, session.available_trains, session.slots, session.dialect)
             if answer:
                 session.add_history("inbound", user_input)
                 session.add_history("outbound", answer, (time.time() - start_time) * 1000)
                 return answer
         if re.search(r"already (?:told|said|gave)|pehle.*bataya|पहले.*बताया", user_input, re.I) and session.slots.get("date"):
-            answer = f"Yes, I have {session.slots.get('source')} to {session.slots.get('destination')} for {session.slots['date']}."
+            answer = choose(session.dialect,
+                f"Yes, I have {session.slots.get('source')} to {session.slots.get('destination')} for {session.slots['date']}.",
+                f"जी, मेरे पास {session.slots.get('source')} से {session.slots.get('destination')} की यात्रा की तारीख {session.slots['date']} है।")
             if session.available_trains:
-                answer += " Please tell me the train name or number for its timings."
+                answer += choose(session.dialect, " Please tell me the train name or number for its timings.", " समय जानने के लिए ट्रेन का नाम या संख्या बताएं।")
             session.add_history("inbound", user_input)
             session.add_history("outbound", answer, (time.time() - start_time) * 1000)
             return answer
@@ -120,12 +168,12 @@ class FSMCoordinator:
                 session.dialect = "Hinglish"
                 session.language_selected = True
                 session.state = "INTENT"
-                response_text = "Perfect, ab Hinglish mein baat karte hain. Aapko train book karni hai ya status check karna hai?"
+                response_text = "ठीक है, मैं Hinglish में बात करूँगी। Train search करनी है या seat availability देखनी है?"
             elif is_hindi:
                 session.dialect = "Hindi"
                 session.language_selected = True
                 session.state = "INTENT"
-                response_text = "Theek hai, ab hum Hindi mein baat karenge. Main aapki train booking mein kya sahayata kar sakta hoon?"
+                response_text = "ठीक है, मैं हिंदी में बात करूँगी। ट्रेन खोजने या सीट की उपलब्धता देखने में मैं आपकी कैसे सहायता कर सकती हूँ?"
             elif is_english:
                 session.dialect = "English"
                 session.language_selected = True
@@ -170,7 +218,7 @@ class FSMCoordinator:
             if intent == "END_CONVERSATION":
                 session.state = "END"
                 if session.dialect == "Hindi":
-                    response_text = "Hamari seva ka upyog karne ke liye dhanyawaad. Aapka din shubh ho! Alvida."
+                    response_text = "लोकोवॉइस का उपयोग करने के लिए धन्यवाद। आपकी यात्रा शुभ हो!"
                 elif session.dialect == "Hinglish":
                     response_text = "Train booking agent ko use karne ke liye thank you. Have a great day! Bye bye!"
                 else:
@@ -199,16 +247,18 @@ class FSMCoordinator:
             else:
                 # Ask user to clarify
                 if session.dialect == "Hindi":
-                    response_text = "Kripya batayein, kya aap train search, seat availability, ticket booking ya cancel karna chahte hain?"
+                    response_text = "मैं ट्रेन खोजने और सीट की उपलब्धता देखने में सहायता कर सकती हूँ। आप क्या जानना चाहते हैं?"
                 elif session.dialect == "Hinglish":
-                    response_text = "Main aapki train search, ticket booking ya status check karne mein help kar sakta hoon. Aapko kya karna hai?"
+                    response_text = "मैं train search और seat availability में help कर सकती हूँ। आप क्या जानना चाहते हैं?"
                 else:
                     response_text = "I can help you search trains, check seat availability, book, or cancel tickets. What would you like to do?"
                     
         elif session.state == "COLLECT":
             # A date-only answer needs validation, not two provider requests.
             expression = date_expression(user_input)
-            if expression and user_input.strip().rstrip('.!?').casefold() == expression.casefold():
+            if expression and (user_input.strip().rstrip('.!?।').casefold() == expression.casefold()
+                               or (not session.slots.get("date") and session.slots.get("source") and session.slots.get("destination")
+                                   and not re.search(r"\b(from|to|class|train)\b|से|तक|श्रेणी", user_input, re.I))):
                 result = self._validate_collection(session, user_input, {"slots": session.slots.copy()})
                 if result.get("all_slots_filled"):
                     session.state = "CONFIRM"
@@ -240,7 +290,7 @@ class FSMCoordinator:
             if new_intent == "END_CONVERSATION" and should_switch_intent:
                 session.state = "END"
                 if session.dialect == "Hindi":
-                    response_text = "Hamari seva ka upyog karne ke liye dhanyawaad. Aapka din shubh ho! Alvida."
+                    response_text = "लोकोवॉइस का उपयोग करने के लिए धन्यवाद। आपकी यात्रा शुभ हो!"
                 elif session.dialect == "Hinglish":
                     response_text = "Train booking agent ko use karne ke liye thank you. Have a great day! Bye bye!"
                 else:
@@ -337,7 +387,7 @@ class FSMCoordinator:
             
         elif session.state == "END":
             if session.dialect == "Hindi":
-                response_text = "Hamari seva ka upyog karne ke liye dhanyawaad. Bye bye!"
+                response_text = "लोकोवॉइस का उपयोग करने के लिए धन्यवाद। आपकी यात्रा शुभ हो!"
             elif session.dialect == "Hinglish":
                 response_text = "Train booking agent ko use karne ke liye thank you. Have a great day!"
             else:
@@ -356,14 +406,30 @@ class FSMCoordinator:
                 "dialect": session.dialect, "available_trains": session.available_trains,
                 "history": session.history[-6:]}
 
+    def _collect_selection(self, session, text):
+        if session.intent == "FIND_TRAINS":
+            session.intent = "CHECK_SEAT"
+        session.state = "COLLECT"
+        session.add_history("inbound", text)
+        result = self._validate_collection(session, text, {"slots": session.slots.copy()})
+        if result["all_slots_filled"]:
+            session.state = "CONFIRM"
+            answer = self._confirmation_prompt(session)
+        else:
+            answer = result["next_question"]
+        session.add_history("outbound", answer)
+        return answer
+
     def _confirmation_prompt(self, session):
+        labels = {"source": "प्रस्थान", "destination": "गंतव्य", "date": "तारीख", "train_no": "ट्रेन संख्या",
+                  "class_code": "श्रेणी", "passenger_name": "यात्री का नाम", "pnr_number": "पीएनआर संख्या"}
+        actions = {"FIND_TRAINS": "ट्रेन खोजने", "CHECK_SEAT": "सीट की उपलब्धता देखने", "BOOK_TICKET": "टिकट बुक करने",
+                   "CANCEL_TICKET": "टिकट रद्द करने", "GET_PNR_STATUS": "पीएनआर की स्थिति देखने"}
+        if session.dialect != "English":
+            details = ", ".join(f"{labels[key]}: {class_name(session.slots[key], session.dialect) if key == 'class_code' else session.slots[key]}" for key in REQUIRED_SLOTS[session.intent])
+            return f"{actions[session.intent]} के लिए पुष्टि करें: {details}। क्या मैं आगे बढ़ूँ?"
         details = ", ".join(f"{key.replace('_', ' ')}: {session.slots[key]}" for key in REQUIRED_SLOTS[session.intent])
-        action = session.intent.lower().replace("_", " ")
-        if session.dialect == "Hindi":
-            return f"कृपया पुष्टि करें: {action}, {details}। क्या मैं आगे बढ़ूँ?"
-        if session.dialect == "Hinglish":
-            return f"Please confirm karein: {action}, {details}. Kya main proceed karun?"
-        return f"Please confirm {action}: {details}. Shall I proceed?"
+        return f"Please confirm {session.intent.lower().replace('_', ' ')}: {details}. Shall I proceed?"
 
     def _unavailable_intent(self, intent):
         features = {"BOOK_TICKET": "Ticket booking", "CANCEL_TICKET": "Ticket cancellation", "GET_PNR_STATUS": "PNR and running status"}
@@ -380,6 +446,13 @@ class FSMCoordinator:
         for key in previous:
             value = proposed.get(key)
             if isinstance(value, (str, int)) and str(value).strip().lower() not in ("", "none", "null"):
+                # Repeating the full slot table must not rewrite known parameters
+                # when the user is only answering a train/class question.
+                if previous.get(key) and key in ("source", "destination", "date"):
+                    explicit_change = re.search(r'\b(from|to|instead|change|actually|date|about)\b|से|तक|बदल|तारीख|बजाय', user_input, re.I)
+                    mentioned = str(value).casefold() in user_input.casefold()
+                    if not explicit_change and not mentioned and not (key == 'date' and date_expression(user_input)):
+                        continue
                 slots[key] = str(value).strip()
         session.slots = slots
         error = None
@@ -392,6 +465,8 @@ class FSMCoordinator:
                 error = str(exc)
         changed = any(previous.get(k) != slots.get(k) for k in ("source", "destination", "date"))
         if changed:
+            session.pending_train = None
+            session.completed_response = None
             session.available_trains = []
             session.search_key = None
         # Preserve only a previous choice or a train explicitly named in this turn.
@@ -400,9 +475,9 @@ class FSMCoordinator:
         if match:
             slots["train_no"] = match.group(0)
         else:
-            matches = [t for t in session.available_trains if t.get("name") and t["name"].casefold() in user_input.casefold()]
-            if len(matches) == 1:
-                slots["train_no"] = str(matches[0]["no"])
+            selected, _ = match_train(user_input, session.available_trains)
+            if selected:
+                slots["train_no"] = str(selected["no"])
             ordinal = re.fullmatch(r"(?:choose |select |book |the |option |train )*(first|second|third|fourth|1st|2nd|3rd|4th|pehli|dusri|teesri|chauthi)(?: one| option| train| please| wala| wali)*[.!]?", user_input.strip().lower())
             if ordinal:
                 indexes = {"first": 0, "1st": 0, "pehli": 0, "second": 1, "2nd": 1, "dusri": 1, "third": 2, "3rd": 2, "teesri": 2, "fourth": 3, "4th": 3, "chauthi": 3}
@@ -410,6 +485,9 @@ class FSMCoordinator:
                 index = indexes[ordinal.group(1)]
                 if index < len(options):
                     slots["train_no"], slots["class_code"] = options[index]
+        explicit_code = selected_class(user_input)
+        if explicit_code:
+            slots["class_code"] = explicit_code
         if slots.get("class_code"):
             slots["class_code"] = slots["class_code"].upper()
         explicit_class = re.search(r"\bclass\s+(1A|2A|3A|3E|SL|CC|EC|2S)\b", user_input, re.I)
@@ -422,8 +500,10 @@ class FSMCoordinator:
         result["all_slots_filled"] = not missing and not error
         if error:
             result["next_question"] = error
-        elif missing and missing[0] == "train_no":
-            result["next_question"] = "Please choose a train from the results, or say its five-digit train number."
+        elif missing:
+            # The validated slot table, not a model-generated question, determines
+            # what is still missing. This prevents asking again for known details.
+            result["next_question"] = missing_question(missing[0], session.dialect, session.available_trains, slots)
         return result
 
     def _validate_selected_train(self, session, refresh=False):
@@ -478,6 +558,7 @@ class FSMCoordinator:
         """
         intent = session.intent
         slots = session.slots
+        session.completed_response = None
         result = {}
         missing = [key for key in REQUIRED_SLOTS.get(intent, []) if not slots.get(key)]
         if missing:
@@ -563,6 +644,7 @@ class FSMCoordinator:
             return result.get("error", "The action could not be completed.")
         
         # Read actual results directly: no extra prompt, quota cost, or invented facts.
-        return result_summary(result, slots, session.dialect)
+        session.completed_response = result_summary(result, slots, session.dialect)
+        return session.completed_response
 
 fsm_coordinator = FSMCoordinator()

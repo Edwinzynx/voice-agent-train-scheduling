@@ -180,6 +180,19 @@ def test_debug_train_reply_does_not_dump_provider_payload():
     assert "upstream payload" not in result["response"]
 
 
+def test_filler_does_not_generate_a_turn_or_lose_language(client, speech_provider):
+    with client.websocket_connect('/calls/ws/filler') as websocket:
+        start(websocket)
+        websocket.send_json({'type': 'user_transcript', 'text': 'uh'})
+        assert websocket.receive_json() == {'type': 'input_ignored', 'processing': False}
+        websocket.send_json({'type': 'user_transcript', 'text': 'Hindi'})
+        assert websocket.receive_json()['type'] == 'processing'
+        reply = websocket.receive_json()
+        assert reply['dialect'] == 'Hindi' and 'कर सकती हूँ' in reply['text']
+        websocket.send_json({'type': 'stop'})
+        assert websocket.receive()['type'] == 'websocket.close'
+
+
 def test_allowed_origin_url_trailing_slash(client, speech_provider, monkeypatch):
     from app.config import configured_origins
     from starlette.websockets import WebSocketDisconnect

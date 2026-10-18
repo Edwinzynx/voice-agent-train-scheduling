@@ -74,15 +74,23 @@ def normalize_date(value: str, today: date = None) -> str:
 
 def confirmation_decision(text: str):
     """Only explicit, unambiguous approval can execute an action."""
+    text = unicodedata.normalize("NFC", str(text or "").lower()).replace("हाँ", "हां")
     text = "".join(" " if unicodedata.category(char).startswith("P") and char not in "'’" else char
-                   for char in str(text or "").lower())
+                   for char in text)
     text = " ".join(text.split())
-    if re.search(r"(?<!\w)(not sure|unsure|maybe|perhaps|wait|hold on|pata nahi|शायद)(?!\w)", text):
+    if re.search(r"(?<!\w)(not sure|unsure|maybe|perhaps|wait|hold on|pata nahi|शायद|रुकिए|रुको)(?!\w)", text):
         return None
     if re.search(r"(?<!\w)(no|not|never|don't|don’t|do not|nahi|nahin|na|mat|नहीं|मत|गलत)(?!\w)", text):
         return False
-    if re.search(r"(?<!\w)(change|instead|actually|correct my|correct the|replace|badal|बदल)(?!\w)", text):
+    if re.search(r"(?<!\w)(change|instead|actually|correct my|correct the|replace|badal|बदल\w*|लेकिन|पर|but)(?!\w)", text):
         return False
+    # Accept complete approval phrases, including STT punctuation and mixed-language
+    # politeness. Every token must belong to this grammar; 'haan, change the date'
+    # and utterances containing new parameters can never execute an action.
+    approval = r"yes(?: that is correct| that's correct)?|haan|han|ha|ji|हां|जी|ठीक है|theek hai|sure|okay|ok|confirm(?:ed)?|proceed|go ahead|आगे बढ़िए|आगे बढ़िये|आगे बढ़ें|आगे बढ़ो|आगे बढ़ाइए|पुष्टि करें|कर दीजिए|कर दीजिये|कर दो|aage badhiye|kar dijiye|kar do"
+    polite = r"please|प्लीज|प्लीज़|कृपया"
+    if re.fullmatch(rf"(?:(?:{approval}|{polite})\s*)+", text) and re.search(rf"(?:{approval})", text):
+        return True
     if re.fullmatch(r"(?:please )?(?:yes|yes please|yes that is correct|yes that's correct|yes proceed|yes confirm|haan|han|ha|ji haan|haan ji|हाँ|हां|जी हाँ|ठीक है|sure|okay|ok|confirm|confirmed|proceed|go ahead|theek hai|haan ticket confirm kar do|haan cancel kar dijiye)(?: please)?", text):
         return True
     if re.fullmatch(r"(?:please )?cancel(?: the)?(?: request| process)?", text):

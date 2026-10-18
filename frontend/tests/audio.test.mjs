@@ -69,6 +69,9 @@ test('production barge-in stops playback and queued audio while the microphone s
     call.toggleMute()
     ws.receive({ type: 'agent_response', state: 'INTENT', text: 'New reply', speech_epoch: 1, audio_segments: ['new'] })
     assert.equal(audios.length, 2)
+    ws.receive({ type: 'speech_started', speech_epoch: 2 })
+    ws.receive({ type: 'input_ignored', processing: false })
+    assert.equal(call.sendText('Hindi'), true, 'ignored hesitation must not leave input locked')
   } finally {
     call.endCall()
   }

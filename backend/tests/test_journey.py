@@ -49,6 +49,7 @@ def journey(monkeypatch):
     coordinator = fsm.FSMCoordinator()
     session = coordinator.get_or_create_session("test")
     session.state = "COLLECT"
+    session.dialect = "English"
     session.intent = "BOOK_TICKET"
     session.slots.update(source="Delhi", destination="Chandigarh", date=validation.normalize_date("tomorrow"), class_code="CC", passenger_name="Amit")
     trains = [{"no": "12012", "name": "Shatabdi", "classes": ["CC", "EC"]}]

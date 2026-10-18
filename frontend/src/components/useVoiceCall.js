@@ -226,6 +226,11 @@ export default function useVoiceCall(backendUrl, onCallStateChange) {
         try {
           const data = JSON.parse(event.data)
           if (data.type === 'ready') clearTimeout(r.connectTimer)
+          if (data.type === 'input_ignored' && !data.processing) {
+            pending.current = false
+            setIsProcessing(false)
+            resumeListening()
+          }
           if (data.type === 'speech_started') {
             r.speechEpoch = Math.max(r.speechEpoch, data.speech_epoch || 0)
             interruptPlayback()
@@ -246,7 +251,7 @@ export default function useVoiceCall(backendUrl, onCallStateChange) {
           }
           if (data.type === 'agent_response') {
             const interrupted = data.interrupted || (data.speech_epoch ?? r.speechEpoch) < r.speechEpoch
-            if (!interrupted) {
+            if (!interrupted || data.waiting_for_input) {
               pending.current = false
               setIsProcessing(false)
             }

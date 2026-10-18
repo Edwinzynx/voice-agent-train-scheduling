@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import Call, CallLog
 from ..brain.fsm import fsm_coordinator
+from ..brain.selection import filler_only
 from ..audio import sarvam
 from ..config import config_manager, configured_origins
 
@@ -109,10 +110,14 @@ async def call_websocket(websocket: WebSocket, call_id: str, db: Session = Depen
         if epoch != speech_epoch:
             payload.pop("audio_segments", None)
             payload["interrupted"] = True
+            payload["waiting_for_input"] = not speech_active and turns.empty()
         await send(payload)
 
     async def run_turn(data):
         nonlocal processing
+        if data.get("type") == "user_transcript" and filler_only(str(data.get("text", ""))):
+            await send({"type": "input_ignored", "processing": processing})
+            return
         processing = True
         await send({"type": "processing"})
         before = session.state
@@ -166,7 +171,9 @@ async def call_websocket(websocket: WebSocket, call_id: str, db: Session = Depen
             elif kind == "transcript.final":
                 speech_active = False
                 text = str(event.get("text", "")).strip()
-                if text and session.state != "END":
+                if filler_only(text):
+                    await send({"type": "input_ignored", "processing": processing})
+                if text and not filler_only(text) and session.state != "END":
                     await send({"type": "user_transcript", "text": text})
                     if turns.full():
                         await send({"type": "error", "message": "Too many pending turns. Please pause briefly, then repeat your last message.", "fatal": False})

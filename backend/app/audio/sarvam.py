@@ -6,6 +6,7 @@ from urllib.parse import urlencode
 import httpx
 import websockets
 from ..config import config_manager
+from ..brain.language import spoken_text
 
 
 async def connect_transcription():
@@ -39,7 +40,7 @@ async def synthesize_text(text, dialect="English"):
         response = await client.post(
             "https://api.sarvam.ai/text-to-speech",
             headers={"api-subscription-key": settings.sarvam_api_key},
-            json={"text": text[:2500], "language_code": "en-IN" if dialect == "English" else "hi-IN",
+            json={"text": spoken_text(text, dialect)[:2500], "language_code": "en-IN" if dialect == "English" else "hi-IN",
                   "model": settings.sarvam_tts_model, "speaker": settings.sarvam_voice,
                   "output_audio_codec": "wav", "speech_sample_rate": 22050},
         )
