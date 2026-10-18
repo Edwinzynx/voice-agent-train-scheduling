@@ -97,6 +97,7 @@ def test_bad_audio_is_not_forwarded(client, speech_provider):
         websocket.send_json({"type": "audio", "audio": "not base64!"})
         result = websocket.receive_json()
         assert result["type"] == "error" and result["fatal"]
+        assert websocket.receive()["type"] == "websocket.close"
     assert not any(message.get("event") == "audio_input" for message in speech_provider.messages)
 
 
@@ -111,6 +112,8 @@ def test_tts_failure_keeps_text_visible(client, speech_provider, monkeypatch):
         assert response["text"] and response["audio_error"]
         assert "audio_segments" not in response
         websocket.send_json({"type": "stop"})
+        assert websocket.receive()["type"] == "websocket.close"
+    assert not calls.active_connections
 
 
 def test_render_environment_ignores_debug_flags(monkeypatch):
@@ -155,6 +158,7 @@ def test_voice_still_requires_speech_key(client):
         result = websocket.receive_json()
         assert result["type"] == "error" and result["fatal"]
         assert "SARVAM_API_KEY" in result["message"]
+        assert websocket.receive()["type"] == "websocket.close"
 
 
 def test_unknown_session_mode_rejected(client, speech_provider):
@@ -162,6 +166,7 @@ def test_unknown_session_mode_rejected(client, speech_provider):
         websocket.send_json({"type": "start", "mode": "anything"})
         result = websocket.receive_json()
         assert result["type"] == "error" and result["fatal"]
+        assert websocket.receive()["type"] == "websocket.close"
     assert not speech_provider.messages
 
 
