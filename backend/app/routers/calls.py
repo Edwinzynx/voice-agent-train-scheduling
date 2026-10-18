@@ -3,7 +3,6 @@ import base64
 import copy
 import json
 import logging
-import os
 import re
 import time
 from datetime import datetime
@@ -13,7 +12,7 @@ from ..database import get_db
 from ..models import Call, CallLog
 from ..brain.fsm import fsm_coordinator
 from ..audio import sarvam
-from ..config import config_manager
+from ..config import config_manager, configured_origins
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/calls", tags=["calls"])
@@ -46,7 +45,7 @@ def public_trains(trains):
 
 @router.websocket("/ws/{call_id}")
 async def call_websocket(websocket: WebSocket, call_id: str, db: Session = Depends(get_db)):
-    origins = [v.strip() for v in os.getenv("ALLOWED_ORIGINS", "").split(",") if v.strip()]
+    origins = configured_origins(default="")
     if origins and "*" not in origins and websocket.headers.get("origin") not in origins:
         await websocket.close(code=1008)
         return

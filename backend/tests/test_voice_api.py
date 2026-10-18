@@ -178,3 +178,21 @@ def test_debug_train_reply_does_not_dump_provider_payload():
     assert "Found 1 trains" in result["response"]
     assert "raw_train_data" not in result["response"]
     assert "upstream payload" not in result["response"]
+
+
+def test_allowed_origin_url_trailing_slash(client, speech_provider, monkeypatch):
+    from app.config import configured_origins
+    from starlette.websockets import WebSocketDisconnect
+    origin = "https://locovoice-skkrrt-train-agent.vercel.app"
+    monkeypatch.setenv("ALLOWED_ORIGINS", f" {origin}/ ")
+    assert configured_origins() == [origin]
+    with client.websocket_connect("/calls/ws/allowed-origin", headers={"origin": origin}) as websocket:
+        websocket.send_json({"type": "start", "mode": "text"})
+        assert websocket.receive_json()["type"] == "ready"
+        assert websocket.receive_json()["type"] == "agent_response"
+        websocket.send_json({"type": "stop"})
+        assert websocket.receive()["type"] == "websocket.close"
+    with pytest.raises(WebSocketDisconnect) as denied:
+        with client.websocket_connect("/calls/ws/denied-origin", headers={"origin": "https://untrusted.example"}):
+            pass
+    assert denied.value.code == 1008

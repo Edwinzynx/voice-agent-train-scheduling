@@ -6,6 +6,12 @@ from pydantic import BaseModel
 BASE_DIR = Path(__file__).resolve().parent.parent
 CONFIG_FILE = BASE_DIR / "config.json"
 
+
+def configured_origins(default="*"):
+    # Browsers send an origin without a trailing slash, even when the owner
+    # copies a site URL ending in / from the address bar.
+    return [value.strip().rstrip("/") for value in os.getenv("ALLOWED_ORIGINS", default).split(",") if value.strip()]
+
 class AppSettings(BaseModel):
     environment: str = "development"
     admin_token: str = ""

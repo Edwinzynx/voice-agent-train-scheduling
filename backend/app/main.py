@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .database import engine, Base
 from .routers import calls, dashboard, eval
+from .config import configured_origins
 
 # Setup logging
 logging.basicConfig(
@@ -26,8 +27,7 @@ app = FastAPI(
 
 # Enable CORS for frontend dashboard communication
 import os
-allowed_origins_raw = os.getenv("ALLOWED_ORIGINS", "*")
-allowed_origins = [origin.strip() for origin in allowed_origins_raw.split(",") if origin.strip()]
+allowed_origins = configured_origins()
 
 app.add_middleware(
     CORSMiddleware,
