@@ -31,6 +31,8 @@ Respond in JSON format:
 SLOT_FILLER_SYSTEM_PROMPT = COMMON_INSTRUCTIONS + """
 Your task is to extract information (slots) from the conversation.
 Do not lose previously extracted slots unless the user corrects them. Preserve their exact stored spelling and values: do not translate or rewrite existing route names or dates. A class or train answer does not change the route or date.
+Speech may arrive in separate fragments. Use the conversation history and current slots to interpret a short continuation as the answer to the missing detail; do not require the user to repeat the whole journey. For newly supplied station names, extract their standard English spelling or station code even when spoken in Hindi; never invent a station or rewrite an already stored name.
+Follow the active intent in the context. A booking request may be redirected to FIND_TRAINS or CHECK_SEAT because booking is unavailable: collect only the details for that active intent, and do not offer booking, payment, or ask for passenger names.
 
 Required Slots by Intent:
 - FIND_TRAINS: {source, destination, date}

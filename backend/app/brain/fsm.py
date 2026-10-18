@@ -187,13 +187,15 @@ class FSMCoordinator:
                     session.state = "END"
                     return "Thank you for using LocoVoice. Goodbye!"
                 if intent in REQUIRED_SLOTS:
+                    session.dialect = result.get("language_detected", "Hinglish")
+                    session.language_selected = True
                     unavailable = self._unavailable_intent(intent)
                     if unavailable:
+                        if intent == "BOOK_TICKET":
+                            return self._continue_booking_as_search(session, user_input)
                         session.state = "INTENT"
                         return unavailable
                     session.intent = intent
-                    session.dialect = result.get("language_detected", "Hinglish")
-                    session.language_selected = True
                     session.state = "COLLECT"
                     collect_result = run_brain_step("COLLECT", user_input, self._context(session))
                     collect_result = self._validate_collection(session, user_input, collect_result)
@@ -226,6 +228,8 @@ class FSMCoordinator:
             elif intent in REQUIRED_SLOTS:
                 unavailable = self._unavailable_intent(intent)
                 if unavailable:
+                    if intent == "BOOK_TICKET":
+                        return self._continue_booking_as_search(session, user_input)
                     return unavailable
                 # A follow-up belongs to the existing journey until the user changes it.
                 session.intent = intent
@@ -251,7 +255,7 @@ class FSMCoordinator:
                 elif session.dialect == "Hinglish":
                     response_text = "मैं train search और seat availability में help कर सकती हूँ। आप क्या जानना चाहते हैं?"
                 else:
-                    response_text = "I can help you search trains, check seat availability, book, or cancel tickets. What would you like to do?"
+                    response_text = "I can help you search trains and check seat availability. What would you like to know?"
                     
         elif session.state == "COLLECT":
             # A date-only answer needs validation, not two provider requests.
@@ -281,7 +285,7 @@ class FSMCoordinator:
             elif session.intent in ["FIND_TRAINS", "CHECK_SEAT", "UNKNOWN"] and new_intent == "BOOK_TICKET":
                 # Only switch if the user explicitly mentions booking/ticket keywords to prevent misclassification of slot answers
                 text_lower = user_input.lower()
-                booking_keywords = ["book", "booking", "ticket", "reserve", "yatra", "kar do", "confirm"]
+                booking_keywords = ["book", "booking", "ticket", "reserve", "yatra", "kar do", "confirm", "बुक", "टिकट", "आरक्षण"]
                 if any(kw in text_lower for kw in booking_keywords):
                     should_switch_intent = True
             elif session.intent == "UNKNOWN" and new_intent != "UNKNOWN":
@@ -303,6 +307,8 @@ class FSMCoordinator:
             elif should_switch_intent and new_intent != session.intent:
                 unavailable = self._unavailable_intent(new_intent)
                 if unavailable:
+                    if new_intent == "BOOK_TICKET":
+                        return self._continue_booking_as_search(session, user_input)
                     return unavailable
                 prev_source = session.slots.get("source")
                 prev_destination = session.slots.get("destination")
@@ -405,6 +411,24 @@ class FSMCoordinator:
         return {"slots": session.slots.copy(), "intent": session.intent,
                 "dialect": session.dialect, "available_trains": session.available_trains,
                 "history": session.history[-6:]}
+
+    def _continue_booking_as_search(self, session, user_input):
+        """Keep useful journey details without offering an unavailable transaction."""
+        session.intent = "CHECK_SEAT" if session.intent == "CHECK_SEAT" else "FIND_TRAINS"
+        session.state = "COLLECT"
+        session.completed_response = None
+        result = run_brain_step("COLLECT", user_input, self._context(session))
+        result = self._validate_collection(session, user_input, result)
+        if result["all_slots_filled"]:
+            session.state = "CONFIRM"
+            question = self._confirmation_prompt(session)
+        else:
+            question = result["next_question"]
+        notice = choose(session.dialect,
+            "I can't book tickets because a booking provider isn't connected yet. I can help you find trains and check seat availability.",
+            "टिकट बुकिंग की सेवा अभी जुड़ी नहीं है, इसलिए मैं टिकट बुक नहीं कर सकती। मैं ट्रेन खोजने और सीट की उपलब्धता देखने में मदद कर सकती हूँ।",
+            "Ticket booking की service अभी जुड़ी नहीं है, इसलिए मैं ticket book नहीं कर सकती। मैं train search और seat availability में मदद कर सकती हूँ।")
+        return f"{notice} {question}"
 
     def _collect_selection(self, session, text):
         if session.intent == "FIND_TRAINS":
