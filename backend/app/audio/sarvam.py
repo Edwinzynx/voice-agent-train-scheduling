@@ -42,6 +42,7 @@ async def synthesize_text(text, dialect="English"):
             headers={"api-subscription-key": settings.sarvam_api_key},
             json={"text": spoken_text(text, dialect)[:2500], "language_code": "en-IN" if dialect == "English" else "hi-IN",
                   "model": settings.sarvam_tts_model, "speaker": settings.sarvam_voice,
+                  "pace": 1.2,
                   "output_audio_codec": "wav", "speech_sample_rate": 22050},
         )
         if response.status_code != 200:
