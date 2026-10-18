@@ -81,6 +81,8 @@ async def call_websocket(websocket: WebSocket, call_id: str, db: Session = Depen
     started = False
     voice_mode = True
     processing = False
+    speech_epoch = 0
+    speech_active = False
     failed = False
     deadline = time.monotonic() + 600
 
@@ -88,20 +90,25 @@ async def call_websocket(websocket: WebSocket, call_id: str, db: Session = Depen
         async with send_lock:
             await websocket.send_json(payload)
 
-    async def respond(text, latency=0):
+    async def respond(text, latency=0, epoch=None):
+        epoch = speech_epoch if epoch is None else epoch
         payload = {"type": "agent_response", "text": text, "state": session.state,
+                   "speech_epoch": epoch,
                    "slots": session.slots.copy(), "dialect": session.dialect, "latency_ms": latency,
                    "available_trains": public_trains(session.available_trains),
                    "last_action_result": session.last_action_result}
         if payload["last_action_result"] and "trains" in payload["last_action_result"]:
             payload["last_action_result"] = {**payload["last_action_result"], "trains": public_trains(payload["last_action_result"]["trains"])}
-        if voice_mode and availability["speech_provider"] == "sarvam":
+        if voice_mode and availability["speech_provider"] == "sarvam" and epoch == speech_epoch:
             try:
                 payload["audio_segments"] = await sarvam.synthesize_text(text, "English" if session.state == "LANGUAGE" else session.dialect)
                 payload["audio_mime"] = "audio/wav"
             except Exception:
                 logger.warning("Speech synthesis unavailable for call %s", call_id)
                 payload["audio_error"] = "Speech output is unavailable. The response is shown as text; you can keep speaking."
+        if epoch != speech_epoch:
+            payload.pop("audio_segments", None)
+            payload["interrupted"] = True
         await send(payload)
 
     async def run_turn(data):
@@ -112,6 +119,7 @@ async def call_websocket(websocket: WebSocket, call_id: str, db: Session = Depen
         slots_before = session.slots.copy()
         snapshot = copy.deepcopy(session.__dict__)
         started_at = time.monotonic()
+        epoch = data.get("speech_epoch", speech_epoch)
         selection = data.get("type") == "select_train"
         text = f"Selected train {data.get('train_no')} class {data.get('class_code')}" if selection else str(data.get("text", ""))[:2000]
         try:
@@ -123,14 +131,21 @@ async def call_websocket(websocket: WebSocket, call_id: str, db: Session = Depen
             db.add(CallLog(call_id=call_id, direction="inbound", state=before, text=text, slots_snapshot=json.dumps(slots_before)))
             db.add(CallLog(call_id=call_id, direction="outbound", state=session.state, text=response, latency_ms=latency, slots_snapshot=json.dumps(session.slots)))
             db.commit()
-            await respond(response, latency)
+            await respond(response, latency, epoch)
         except (RuntimeError, ValueError) as exc:
             session.__dict__.update(snapshot)
             await send({"type": "error", "message": str(exc), "fatal": False})
         finally:
             processing = False
 
-    async def worker():
+    async def worker(greeting):
+        nonlocal processing
+        # Receive microphone packets even while the greeting is being synthesized.
+        processing = True
+        try:
+            await respond(greeting, epoch=0)
+        finally:
+            processing = False
         while True:
             data = await turns.get()
             try:
@@ -139,13 +154,24 @@ async def call_websocket(websocket: WebSocket, call_id: str, db: Session = Depen
                 turns.task_done()
 
     async def receive_speech():
+        nonlocal speech_epoch, speech_active
         async for raw in speech:
             event = json.loads(raw)
-            if event.get("event") == "transcript.final":
+            kind = event.get("event")
+            if kind == "vad.speech_start" or (kind == "transcript.partial" and event.get("text") and not speech_active):
+                if not speech_active:
+                    speech_epoch += 1
+                    speech_active = True
+                    await send({"type": "speech_started", "speech_epoch": speech_epoch})
+            elif kind == "transcript.final":
+                speech_active = False
                 text = str(event.get("text", "")).strip()
-                if text and not processing and session.state != "END":
+                if text and session.state != "END":
                     await send({"type": "user_transcript", "text": text})
-                    await turns.put({"type": "user_transcript", "text": text})
+                    if turns.full():
+                        await send({"type": "error", "message": "Too many pending turns. Please pause briefly, then repeat your last message.", "fatal": False})
+                    else:
+                        turns.put_nowait({"type": "user_transcript", "text": text, "speech_epoch": speech_epoch})
             elif event.get("event") == "error":
                 raise RuntimeError("Speech recognition failed. Please reconnect and check the provider's quota.")
         raise RuntimeError("Speech recognition disconnected. Please start a new call.")
@@ -186,20 +212,17 @@ async def call_websocket(websocket: WebSocket, call_id: str, db: Session = Depen
                         raise ValueError("Microphone audio must be 16 kHz mono PCM.")
                     speech = await sarvam.connect_transcription()
                     tasks.extend([asyncio.create_task(receive_speech()), asyncio.create_task(keepalive())])
-                tasks.append(asyncio.create_task(worker()))
                 started = True
-                processing = True
                 greeting = fsm_coordinator.process_turn(call_id, "GREET")
                 db.add(CallLog(call_id=call_id, direction="outbound", state=session.state, text=greeting))
                 db.commit()
                 await send({"type": "ready"})
-                await respond(greeting)
-                processing = False
+                tasks.append(asyncio.create_task(worker(greeting)))
             elif kind == "audio" and started and speech:
                 audio = base64.b64decode(data.get("audio", ""), validate=True)
                 if not audio or len(audio) % 2 or len(audio) > 16000:
                     raise ValueError("Invalid PCM audio packet.")
-                if not processing and session.state != "END":
+                if session.state != "END":
                     await speech.send(json.dumps({"event": "audio_input", "audio": data["audio"]}))
             elif kind in ("user_transcript", "select_train") and started:
                 if processing or not turns.empty():

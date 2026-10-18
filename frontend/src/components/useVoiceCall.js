@@ -71,7 +71,7 @@ export default function useVoiceCall(backendUrl, onCallStateChange) {
     endCall()
     const id = generation.current
     const current = () => generation.current === id
-    const r = { controller: new AbortController(), playback: 0, initialText }
+    const r = { controller: new AbortController(), playback: 0, speechEpoch: 0, initialText }
     resources.current = r
     setError('')
     setInCall(true)
@@ -84,6 +84,17 @@ export default function useVoiceCall(backendUrl, onCallStateChange) {
     setIsMuted(false)
     muted.current = false
     busy.current = true
+    const interruptPlayback = () => {
+      r.playback++
+      if (r.audio) {
+        r.audio.onended = null
+        r.audio.onerror = null
+        r.audio.pause()
+      }
+      window.speechSynthesis?.cancel()
+      setAgentSpeaking(false)
+      busy.current = pending.current
+    }
     const resumeListening = () => {
       if (!current()) return
       busy.current = false
@@ -165,7 +176,9 @@ export default function useVoiceCall(backendUrl, onCallStateChange) {
         r.processor.connect(r.context.destination)
         r.processor.port.onmessage = ({ data }) => {
           const ws = socketRef.current
-          if (!current() || muted.current || busy.current || ws?.readyState !== WebSocket.OPEN) return
+          // Keep sending echo-cancelled microphone audio during playback and processing.
+          // Sarvam's speech-start event interrupts output before the final transcript.
+          if (!current() || muted.current || ws?.readyState !== WebSocket.OPEN) return
           if (ws.bufferedAmount > 64000) {
             setError('The connection is too slow for live audio. Please reconnect.')
             endCall()
@@ -213,6 +226,10 @@ export default function useVoiceCall(backendUrl, onCallStateChange) {
         try {
           const data = JSON.parse(event.data)
           if (data.type === 'ready') clearTimeout(r.connectTimer)
+          if (data.type === 'speech_started') {
+            r.speechEpoch = Math.max(r.speechEpoch, data.speech_epoch || 0)
+            interruptPlayback()
+          }
           if (data.type === 'processing') { busy.current = true; pending.current = true; setIsProcessing(true) }
           if (data.type === 'error') {
             setError(data.message)
@@ -222,18 +239,24 @@ export default function useVoiceCall(backendUrl, onCallStateChange) {
             else resumeListening()
           }
           if (data.type === 'user_transcript') {
+            interruptPlayback()
+            pending.current = true
+            setIsProcessing(true)
             setTranscript(prev => [...prev, { sender: 'user', text: data.text, timestamp: new Date() }])
           }
           if (data.type === 'agent_response') {
-            pending.current = false
-            setIsProcessing(false)
+            const interrupted = data.interrupted || (data.speech_epoch ?? r.speechEpoch) < r.speechEpoch
+            if (!interrupted) {
+              pending.current = false
+              setIsProcessing(false)
+            }
             if (data.latency_ms > 0) setLastLatency(Math.round(data.latency_ms))
             setCurrentState(data.state)
             setSlots(data.slots || {})
             setTranscript(prev => [...prev, { sender: 'agent', text: data.text, timestamp: new Date(), availableTrains: data.available_trains || [], lastActionResult: data.last_action_result, slots: data.slots, state: data.state }])
             callback.current?.({ callId: uniqueId, state: data.state, slots: data.slots, transcriptText: data.text, direction: 'outbound' })
             if (r.recognition) r.recognition.lang = data.dialect === 'English' ? 'en-IN' : 'hi-IN'
-            speak(data)
+            if (!interrupted) speak(data)
           }
         } catch {
           setError('The voice server sent an invalid response. Please reconnect.')

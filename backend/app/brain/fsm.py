@@ -3,6 +3,7 @@ import logging
 import re
 from ..tools import irctc, sms
 from .llm import run_brain_step
+from .results import result_summary, schedule_followup
 from .validation import REQUIRED_SLOTS, confirmation_decision, date_expression, normalize_date
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,19 @@ class FSMCoordinator:
         start_time = time.time()
         session = self.get_or_create_session(session_id)
         session.last_action_result = None
+        if session.state in ("INTENT", "COLLECT", "CONFIRM") and session.available_trains:
+            answer = schedule_followup(user_input, session.available_trains, session.slots)
+            if answer:
+                session.add_history("inbound", user_input)
+                session.add_history("outbound", answer, (time.time() - start_time) * 1000)
+                return answer
+        if re.search(r"already (?:told|said|gave)|pehle.*bataya|पहले.*बताया", user_input, re.I) and session.slots.get("date"):
+            answer = f"Yes, I have {session.slots.get('source')} to {session.slots.get('destination')} for {session.slots['date']}."
+            if session.available_trains:
+                answer += " Please tell me the train name or number for its timings."
+            session.add_history("inbound", user_input)
+            session.add_history("outbound", answer, (time.time() - start_time) * 1000)
+            return answer
         if session.state == "INTENT" and session.available_trains:
             named = any(t.get("name") and t["name"].casefold() in user_input.casefold() for t in session.available_trains)
             numbered = re.search(r"\b\d{5}\b", user_input)
@@ -91,7 +105,7 @@ class FSMCoordinator:
         # State machine processing
         if session.state == "GREET":
             # Greeting explicitly asking which language to speak in - English only
-            response_text = "Hello! Welcome to the train booking service. Which language would you prefer to talk in: English, Hindi, or Hinglish?"
+            response_text = "Hello! Welcome to LocoVoice, your train journey assistant. Which language would you prefer to talk in: English, Hindi, or Hinglish?"
             session.state = "LANGUAGE"
             
         elif session.state == "LANGUAGE":
@@ -119,7 +133,7 @@ class FSMCoordinator:
                 response_text = "Sure, let's speak in English. How can I assist you with your train journey today?"
             else:
                 # 2. Direct bypass check: did the user ignore language question and speak their request directly?
-                result = run_brain_step("INTENT", user_input, {})
+                result = run_brain_step("INTENT", user_input, self._context(session))
                 intent = result.get("intent", "UNKNOWN")
                 if intent == "END_CONVERSATION":
                     session.state = "END"
@@ -133,7 +147,7 @@ class FSMCoordinator:
                     session.dialect = result.get("language_detected", "Hinglish")
                     session.language_selected = True
                     session.state = "COLLECT"
-                    collect_result = run_brain_step("COLLECT", user_input, {"slots": session.slots, "intent": session.intent, "dialect": session.dialect})
+                    collect_result = run_brain_step("COLLECT", user_input, self._context(session))
                     collect_result = self._validate_collection(session, user_input, collect_result)
                     
                     if collect_result.get("all_slots_filled", False):
@@ -147,7 +161,7 @@ class FSMCoordinator:
             
         elif session.state == "INTENT":
             # Classify intent
-            result = run_brain_step("INTENT", user_input, {})
+            result = run_brain_step("INTENT", user_input, self._context(session))
             if not getattr(session, "language_selected", False):
                 session.dialect = result.get("language_detected", "Hinglish")
                 session.language_selected = True
@@ -165,40 +179,15 @@ class FSMCoordinator:
                 unavailable = self._unavailable_intent(intent)
                 if unavailable:
                     return unavailable
-                # Preserve slots if transitioning from FIND_TRAINS to BOOK_TICKET
-                prev_source = session.slots.get("source")
-                prev_destination = session.slots.get("destination")
-                prev_date = session.slots.get("date")
-                
+                # A follow-up belongs to the existing journey until the user changes it.
                 session.intent = intent
-                
-                if intent == "BOOK_TICKET":
-                    session.slots = {
-                        "source": prev_source,
-                        "destination": prev_destination,
-                        "date": prev_date,
-                        "class_code": None,
-                        "passenger_name": None,
-                        "pnr_number": None,
-                        "train_no": None
-                    }
-                else:
-                    session.slots = {
-                        "source": None,
-                        "destination": None,
-                        "date": None,
-                        "class_code": None,
-                        "passenger_name": None,
-                        "pnr_number": None,
-                        "train_no": None
-                    }
-                
-                if intent != "BOOK_TICKET":
-                    session.available_trains = []
+                if intent == "FIND_TRAINS":
+                    session.slots["train_no"] = None
+                    session.slots["class_code"] = None
                 session.last_action_result = None
                 session.state = "COLLECT"
                 # Seed slots using this initial turn input
-                collect_result = run_brain_step("COLLECT", user_input, {"slots": session.slots, "intent": session.intent, "dialect": session.dialect})
+                collect_result = run_brain_step("COLLECT", user_input, self._context(session))
                 collect_result = self._validate_collection(session, user_input, collect_result)
                 
                 if collect_result.get("all_slots_filled", False):
@@ -217,8 +206,20 @@ class FSMCoordinator:
                     response_text = "I can help you search trains, check seat availability, book, or cancel tickets. What would you like to do?"
                     
         elif session.state == "COLLECT":
+            # A date-only answer needs validation, not two provider requests.
+            expression = date_expression(user_input)
+            if expression and user_input.strip().rstrip('.!?').casefold() == expression.casefold():
+                result = self._validate_collection(session, user_input, {"slots": session.slots.copy()})
+                if result.get("all_slots_filled"):
+                    session.state = "CONFIRM"
+                    response_text = self._confirmation_prompt(session)
+                else:
+                    missing = next((k for k in REQUIRED_SLOTS[session.intent] if not session.slots.get(k)), "details")
+                    response_text = result.get("next_question", f"Please provide {missing.replace('_', ' ')}.")
+                session.add_history("outbound", response_text, (time.time() - start_time) * 1000)
+                return response_text
             # 1. Check if the user intends to end the call or switch tasks
-            intent_result = run_brain_step("INTENT", user_input, {})
+            intent_result = run_brain_step("INTENT", user_input, self._context(session))
             new_intent = intent_result.get("intent", "UNKNOWN")
             
             # Determine if we should switch intent
@@ -287,7 +288,8 @@ class FSMCoordinator:
                 "slots": session.slots,
                 "intent": session.intent,
                 "dialect": session.dialect,
-                "available_trains": available_trains
+                "available_trains": available_trains,
+                "history": session.history[-6:]
             }
             session.available_trains = available_trains
             # Fill remaining slots
@@ -348,6 +350,11 @@ class FSMCoordinator:
         session.add_history("outbound", response_text, latency_ms)
         
         return response_text
+
+    def _context(self, session):
+        return {"slots": session.slots.copy(), "intent": session.intent,
+                "dialect": session.dialect, "available_trains": session.available_trains,
+                "history": session.history[-6:]}
 
     def _confirmation_prompt(self, session):
         details = ", ".join(f"{key.replace('_', ' ')}: {session.slots[key]}" for key in REQUIRED_SLOTS[session.intent])
@@ -452,7 +459,17 @@ class FSMCoordinator:
         if session.intent == "FIND_TRAINS":
             session.intent = "CHECK_SEAT"
         session.state = "COLLECT"
-        return self.process_turn(session_id, f"Choose train {train_no} class {class_code}")
+        text = f"Choose train {train_no} class {class_code}"
+        session.last_action_result = None
+        session.add_history("inbound", text)
+        result = self._validate_collection(session, text, {"slots": session.slots.copy()})
+        if result.get("all_slots_filled"):
+            session.state = "CONFIRM"
+            answer = self._confirmation_prompt(session)
+        else:
+            answer = result.get("next_question", "Please provide the missing journey details.")
+        session.add_history("outbound", answer)
+        return answer
 
     def _execute_tool(self, session: SessionState) -> str:
         """
@@ -537,17 +554,15 @@ class FSMCoordinator:
             
         session.last_action_result = result
         session.state = "INTENT"
-        session.available_trains = result.get("trains", [])
+        if "trains" in result:
+            session.available_trains = result["trains"]
+            session.search_key = tuple(slots.get(k) for k in ("source", "destination", "date"))
         if result.get("success"):
             session.booking_success = True
         if result.get("error") or result.get("success") is False:
             return result.get("error", "The action could not be completed.")
         
-        # Synthesize final message using LLM
-        try:
-            exec_result = run_brain_step("EXECUTE", "", {"result": result, "dialect": session.dialect})
-        except RuntimeError:
-            return "The result is displayed on screen. The spoken explanation is temporarily unavailable."
-        return exec_result.get("response", "The action is complete. Review the result details on screen.")
+        # Read actual results directly: no extra prompt, quota cost, or invented facts.
+        return result_summary(result, slots, session.dialect)
 
 fsm_coordinator = FSMCoordinator()

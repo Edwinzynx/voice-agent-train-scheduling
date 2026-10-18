@@ -196,3 +196,47 @@ def test_allowed_origin_url_trailing_slash(client, speech_provider, monkeypatch)
         with client.websocket_connect("/calls/ws/denied-origin", headers={"origin": "https://untrusted.example"}):
             pass
     assert denied.value.code == 1008
+
+
+def test_barge_in_during_synthesis_keeps_audio_and_new_turn(client, speech_provider, monkeypatch):
+    first_audio = asyncio.Event()
+    release_tts = asyncio.Event()
+    original_send = speech_provider.send
+    async def send(raw):
+        message = json.loads(raw)
+        if message.get('event') == 'audio_input':
+            speech_provider.messages.append(message)
+            await speech_provider.events.put(json.dumps({'event': 'vad.speech_start'}))
+            await speech_provider.events.put(json.dumps({'event': 'transcript.final', 'text': 'English'}))
+            first_audio.set()
+            # Let the receiver deliver the interruption before old synthesis returns.
+            await asyncio.sleep(0.01)
+            release_tts.set()
+        else:
+            await original_send(raw)
+    count = 0
+    async def synthesize(*args):
+        nonlocal count
+        count += 1
+        if count == 1:
+            await asyncio.wait_for(release_tts.wait(), 3)
+        return ['dGVzdA==']
+    monkeypatch.setattr(speech_provider, 'send', send)
+    monkeypatch.setattr(sarvam, 'synthesize_text', synthesize)
+    with client.websocket_connect('/calls/ws/barge-in') as websocket:
+        websocket.send_json({'type': 'start', 'sample_rate': 16000, 'encoding': 'linear16'})
+        assert websocket.receive_json()['type'] == 'ready'
+        websocket.send_json({'type': 'audio', 'audio': base64.b64encode(b'\x00\x00'*1600).decode()})
+        event = websocket.receive_json()
+        assert event == {'type': 'speech_started', 'speech_epoch': 1}
+        assert websocket.receive_json()['type'] == 'user_transcript'
+        stale = websocket.receive_json()
+        assert stale['type'] == 'agent_response' and stale['interrupted']
+        assert 'audio_segments' not in stale
+        assert websocket.receive_json()['type'] == 'processing'
+        fresh = websocket.receive_json()
+        assert fresh['state'] == 'INTENT' and fresh['speech_epoch'] == 1
+        assert fresh['audio_segments']
+        websocket.send_json({'type': 'stop'})
+        assert websocket.receive()['type'] == 'websocket.close'
+    assert first_audio.is_set() and speech_provider.closed

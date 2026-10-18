@@ -14,7 +14,8 @@ async def connect_transcription():
         raise RuntimeError("Speech service is not configured. Set SARVAM_API_KEY on the server.")
     params = urlencode({"model": settings.sarvam_stt_model, "language_code": "auto",
                         "encoding": "linear16", "sample_rate": 16000, "mode": "codemix",
-                        "stream_type": "balanced", "endpointing": "vad", "silence_duration_ms": 650})
+                        "stream_type": "fast", "endpointing": "vad", "silence_duration_ms": 650,
+                        "min_speech_duration_ms": 150})
     connection = await websockets.connect(
         "wss://api.sarvam.ai/speech-to-text-realtime/ws?" + params,
         extra_headers={"Api-Subscription-Key": settings.sarvam_api_key},

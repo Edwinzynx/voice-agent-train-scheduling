@@ -37,19 +37,33 @@ def call_groq_json(system_prompt: str, user_prompt: str, api_key: str) -> dict:
                 max_tokens=500
             )
             response_text = chat_completion.choices[0].message.content
-            return json.loads(response_text)
+            result = json.loads(response_text)
+            if not isinstance(result, dict):
+                raise ValueError("Expected a JSON object")
+            return result
         except Exception as e:
             err_msg = str(e).lower()
-            is_rate_limit = any(x in err_msg for x in ["rate_limit", "rate limit", "429", "413", "limit exceeded", "too many requests", "tpm", "rpm"])
-            
-            if is_rate_limit and attempt < max_retries - 1:
-                # Sleep a flat 25 seconds to clear a major chunk of the rolling 1-minute window
-                sleep_time = 1.0
-                logger.warning(f"Groq API rate limit hit. Retrying in {sleep_time:.1f}s... Error: {e}")
-                time.sleep(sleep_time)
+            is_json_error = "json_validate_failed" in err_msg or isinstance(e, (json.JSONDecodeError, ValueError))
+            is_rate_limit = getattr(e, "status_code", None) == 429
+            if (is_json_error or is_rate_limit) and attempt < max_retries - 1:
+                if is_json_error:
+                    system_prompt += "\nReturn ONLY a valid JSON object matching the required schema. No prose outside JSON."
+                else:
+                    time.sleep(1.0)
+                logger.warning("Retrying conversation request (%s)", type(e).__name__)
             else:
-                logger.error(f"Error in Groq API call: {e}")
-                raise e
+                logger.warning("Conversation request failed (%s)", type(e).__name__)
+                raise
+
+
+def compact_context(context):
+    # Bound prompt cost independently of the size of the upstream train response.
+    return {
+        "intent": context.get("intent"), "slots": context.get("slots", {}),
+        "history": [{"role": item.get("direction"), "text": str(item.get("text", ""))[:400]}
+                    for item in context.get("history", [])[-4:]],
+    }
+
 
 def contains_word_or_phrase(text: str, item: str) -> bool:
     if len(item) <= 3:
@@ -437,7 +451,7 @@ def run_brain_step(state: str, user_input: str, context: dict) -> dict:
     api_key = settings.groq_api_key
     try:
         if state == "INTENT":
-            return call_groq_json(INTENT_SYSTEM_PROMPT, f"User message: {user_input}", api_key)
+            return call_groq_json(INTENT_SYSTEM_PROMPT, f"Journey context: {json.dumps(compact_context(context))}\nUser message: {user_input}", api_key)
         elif state == "COLLECT":
             import datetime
             current_date = today_in_india().isoformat()
@@ -445,15 +459,12 @@ def run_brain_step(state: str, user_input: str, context: dict) -> dict:
             formatted_prompt = SLOT_FILLER_SYSTEM_PROMPT.replace("{dialect}", dialect)
             available_trains = context.get("available_trains", [])
             
-            # Strip out raw_train_data to prevent prompt token limit exhaustion
-            clean_trains = []
-            for t in available_trains:
-                t_clean = t.copy()
-                t_clean.pop("raw_train_data", None)
-                clean_trains.append(t_clean)
-            
+            clean_trains = [{key: t.get(key) for key in ("no", "name", "classes", "src", "dst", "dep", "arr")}
+                            for t in available_trains[:8]]
+
             user_prompt = (
                 f"Current Date: {current_date}\n"
+                f"Recent conversation: {json.dumps(compact_context(context)['history'])}\n"
                 f"Current slots table: {json.dumps(context.get('slots', {}))}\n"
                 f"Active Intent: {context.get('intent')}\n"
                 f"Selected Language Dialect: {dialect}\n"
@@ -465,6 +476,8 @@ def run_brain_step(state: str, user_input: str, context: dict) -> dict:
             # Programmatically compute all_slots_filled in Python to prevent LLM inconsistencies
             slots_returned = res.get("slots", {})
             
+            if not isinstance(slots_returned, dict):
+                raise ValueError("Expected slots object")
             # Programmatically clean up class_code slot synonyms
             class_code = slots_returned.get("class_code")
             if class_code:
@@ -505,20 +518,8 @@ def run_brain_step(state: str, user_input: str, context: dict) -> dict:
             formatted_prompt = CONFIRMATION_SYSTEM_PROMPT.replace("{details}", json.dumps(context.get('slots', {}))).replace("{dialect}", context.get("dialect", "Hinglish")).replace("{intent}", intent)
             return call_groq_json(formatted_prompt, user_prompt, api_key)
         elif state == "EXECUTE" or state == "END":
-            res_obj = context.get('result', {})
-            if isinstance(res_obj, dict) and "trains" in res_obj:
-                res_obj_clean = res_obj.copy()
-                clean_list = []
-                for t in res_obj.get("trains", []):
-                    t_clean = t.copy()
-                    t_clean.pop("raw_train_data", None)
-                    clean_list.append(t_clean)
-                res_obj_clean["trains"] = clean_list
-                res_obj = res_obj_clean
-                
-            user_prompt = f"Execution result: {json.dumps(res_obj)}"
-            formatted_prompt = EXECUTE_SYSTEM_PROMPT.replace("{result}", json.dumps(res_obj)).replace("{dialect}", context.get("dialect", "Hinglish"))
-            return call_groq_json(formatted_prompt, user_prompt, api_key)
+            from .results import result_summary
+            return {"response": result_summary(context.get("result", {}), context.get("slots", {}), context.get("dialect", "English"))}
     except Exception as e:
         if settings.environment == "production":
             logger.warning("Conversation provider failed (%s)", type(e).__name__)

@@ -186,3 +186,90 @@ def test_spoken_ordinal_after_search(journey, monkeypatch):
     coordinator.process_turn("test", "second one")
     assert session.intent == "CHECK_SEAT" and session.state == "CONFIRM"
     assert session.slots["class_code"] == "EC"
+
+
+def test_search_summary_and_timing_followup_keep_date(journey, monkeypatch):
+    coordinator, session = journey
+    session.intent = 'FIND_TRAINS'
+    session.state = 'CONFIRM'
+    session.slots.update(source='Delhi', destination='Mumbai')
+    train = {'no': '12910', 'name': 'Garib Rath', 'src': 'Hazrat Nizamuddin',
+             'dst': 'Bandra Terminus', 'dep': '16:30', 'arr': '09:00', 'classes': ['3A'],
+             'raw_train_data': {'large': 'x' * 100000}}
+    monkeypatch.setattr(irctc, 'find_trains', lambda **kwargs: {'success': True, 'trains': [train]})
+    monkeypatch.setattr(fsm, 'run_brain_step', lambda *args: pytest.fail('Known result must not call Groq'))
+    answer = coordinator.process_turn('test', 'yes')
+    assert '16:30' in answer and len(answer) < 600
+    answer = coordinator.process_turn('test', 'What time does Garib Rath start?')
+    assert '16:30' in answer and session.slots['date'] in answer
+    assert session.intent == 'FIND_TRAINS'
+    answer = coordinator.process_turn('test', 'I already told you')
+    assert session.slots['date'] in answer
+    assert session.available_trains == [train]
+
+
+def test_station_timing_followup_reports_ambiguity():
+    from app.brain.results import schedule_followup
+    trains = [{'no': str(n), 'name': 'Express', 'src': 'Hazrat Nizamuddin',
+               'dst': 'Bandra', 'dep': t} for n, t in [(12910, '16:30'), (12926, '09:40')]]
+    answer = schedule_followup('What time does the Delhi Hazrat Nizamuddin to Mumbai Bandra start?',
+                               trains, {'date': '2026-10-19'})
+    assert '2 trains' in answer and '16:30' in answer and '09:40' in answer
+    assert 'Which train number' in answer
+
+
+def test_date_only_answer_avoids_provider(journey, monkeypatch):
+    coordinator, session = journey
+    session.intent = 'FIND_TRAINS'
+    session.slots['date'] = None
+    monkeypatch.setattr(fsm, 'run_brain_step', lambda *args: pytest.fail('Date parsing must not call Groq'))
+    answer = coordinator.process_turn('test', 'Tomorrow')
+    assert session.state == 'CONFIRM'
+    assert validation.normalize_date('tomorrow') in answer
+
+
+def test_followup_intent_and_collection_receive_existing_journey(journey, monkeypatch):
+    coordinator, session = journey
+    session.state = 'INTENT'
+    session.intent = 'FIND_TRAINS'
+    observed = []
+    def brain(state, text, context):
+        observed.append((state, context['slots'].copy()))
+        if state == 'INTENT':
+            return {'intent': 'FIND_TRAINS'}
+        return {'slots': {'destination': 'Mumbai'}}
+    monkeypatch.setattr(fsm, 'run_brain_step', brain)
+    coordinator.process_turn('test', 'What about Mumbai instead?')
+    assert all(slots['date'] == validation.normalize_date('tomorrow') for _, slots in observed)
+    assert session.slots['destination'] == 'Mumbai'
+    assert session.state == 'CONFIRM'
+
+
+def test_prompt_is_bounded_for_large_train_results(monkeypatch):
+    config_manager.settings.groq_api_key = 'test'
+    captured = []
+    monkeypatch.setattr(llm, 'call_groq_json', lambda system, user, key: captured.append(system + user) or {'slots': {}})
+    llm.run_brain_step('COLLECT', 'third one', {'available_trains': [
+        {'no': str(12000+i), 'name': 'Express', 'classes': ['3A'],
+         'class_details': {'3A': {'large': 'x'*10000}}, 'raw_train_data': {'huge': 'x'*10000}}
+        for i in range(100)]})
+    assert len(captured[0]) < 9000
+    assert 'huge' not in captured[0] and 'class_details' not in captured[0]
+
+
+@pytest.mark.parametrize('failure,attempts', [('json_validate_failed', 2), ('oversized request 413', 1)])
+def test_json_retry_but_no_identical_oversize_retry(monkeypatch, failure, attempts):
+    from types import SimpleNamespace
+    observed = []
+    def create(**kwargs):
+        observed.append(kwargs)
+        if len(observed) == 1:
+            raise RuntimeError(failure)
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"intent":"FIND_TRAINS"}'))])
+    monkeypatch.setattr(llm, 'Groq', lambda **kwargs: SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create))))
+    if attempts == 1:
+        with pytest.raises(RuntimeError):
+            llm.call_groq_json('Return JSON', 'hello', 'test')
+    else:
+        assert llm.call_groq_json('Return JSON', 'hello', 'test')['intent'] == 'FIND_TRAINS'
+    assert len(observed) == attempts
