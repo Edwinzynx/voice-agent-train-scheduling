@@ -122,3 +122,54 @@ def test_render_environment_ignores_debug_flags(monkeypatch):
     assert settings.environment == "production"
     assert not settings.use_mock_llm and not settings.allow_simulated_railway
     assert settings.port == 10000
+
+
+def test_text_chat_works_without_speech_key_or_speech_calls(client, monkeypatch):
+    config_manager.settings.groq_api_key = "test-only"
+    async def unexpected_speech(*args):
+        pytest.fail("Text chat must not consume speech credits")
+    monkeypatch.setattr(sarvam, "connect_transcription", unexpected_speech)
+    monkeypatch.setattr(sarvam, "synthesize_text", unexpected_speech)
+    result = client.get("/calls/capabilities").json()
+    assert result["text_ready"] and not result["ready"]
+    with client.websocket_connect("/calls/ws/text-only") as websocket:
+        websocket.send_json({"type": "start", "mode": "text"})
+        assert websocket.receive_json()["type"] == "ready"
+        greeting = websocket.receive_json()
+        assert greeting["state"] == "LANGUAGE"
+        assert "audio_segments" not in greeting and "audio_error" not in greeting
+        websocket.send_json({"type": "user_transcript", "text": "English"})
+        assert websocket.receive_json()["type"] == "processing"
+        response = websocket.receive_json()
+        assert response["state"] == "INTENT"
+        assert "audio_segments" not in response
+        websocket.send_json({"type": "stop"})
+        assert websocket.receive()["type"] == "websocket.close"
+    assert not calls.active_connections
+
+
+def test_voice_still_requires_speech_key(client):
+    config_manager.settings.groq_api_key = "test-only"
+    with client.websocket_connect("/calls/ws/no-speech-key") as websocket:
+        websocket.send_json({"type": "start", "mode": "voice", "sample_rate": 16000, "encoding": "linear16"})
+        result = websocket.receive_json()
+        assert result["type"] == "error" and result["fatal"]
+        assert "SARVAM_API_KEY" in result["message"]
+
+
+def test_unknown_session_mode_rejected(client, speech_provider):
+    with client.websocket_connect("/calls/ws/invalid-mode") as websocket:
+        websocket.send_json({"type": "start", "mode": "anything"})
+        result = websocket.receive_json()
+        assert result["type"] == "error" and result["fatal"]
+    assert not speech_provider.messages
+
+
+def test_debug_train_reply_does_not_dump_provider_payload():
+    from app.brain.llm import run_mock_brain_step
+    result = run_mock_brain_step("EXECUTE", "", {"result": {
+        "success": True, "trains": [{"no": "14217", "raw_train_data": {"internal": "large upstream payload"}}]
+    }})
+    assert "Found 1 trains" in result["response"]
+    assert "raw_train_data" not in result["response"]
+    assert "upstream payload" not in result["response"]

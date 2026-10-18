@@ -12,6 +12,8 @@ The production speech integration uses Sarvam (realtime STT and Bulbul v3 TTS), 
 - API keys are managed by the owner in the server environment. There is no user-supplied-key form or configuration-write API.
 - Admin analytics, transcripts, provider metadata, and evaluations require an owner bearer token. Public calls do not expose it or provider secrets.
 - Local debugging may use browser speech and a rule-based parser. Production never falls back to those modes.
+- The project page and sandbox share the same command center: Live Operations, Call Records, Performance, and FSM Testing. Metrics are read from the protected backend; no simulated counters or canned chat replies are displayed.
+- Text chat uses the same journey and confirmation flow without requesting microphone access or calling Sarvam. Voice calls support typed replies as well.
 
 ## Deployment
 
@@ -37,6 +39,8 @@ Configure these **server-side Render environment variables** before deploying:
 
 Set Vercel's `VITE_BACKEND_URL` to the existing HTTPS backend URL. Never put provider keys or `ADMIN_TOKEN` in Vercel frontend variables, JavaScript, or Git. The owner dashboard accepts only its access token, held in memory until reload/lock.
 
+Create `ADMIN_TOKEN` yourself; it is not issued by a provider. Run `python -c "import secrets; print(secrets.token_urlsafe(32))"` locally, save the result as `ADMIN_TOKEN` in Render, and redeploy. Enter that same value in the command center's Owner access field. Public train queries do not require this token.
+
 Release backend and frontend together: the updated audio protocol requires both. Test a preview deployment with the configured providers before promoting. The `/` response exposes `revision` from `RENDER_GIT_COMMIT` to identify the backend release. `/calls/capabilities` reports missing configuration; `ready` means keys are present, not that provider credit/account access has been validated. A real microphone call must still verify STT, LLM, and TTS against those accounts.
 
 ### Budget and hosting limitations
@@ -52,14 +56,16 @@ Render free-service behavior: https://render.com/docs/free
 
 ## Frontend protocol for the upcoming redesign
 
-1. Read `GET /calls/capabilities`; show the returned message if `ready` is false.
-2. Open `/calls/ws/{unique-call-id}` using WSS and send `{"type":"start","sample_rate":16000,"encoding":"linear16"}`.
+1. Read `GET /calls/capabilities`; `ready` describes voice readiness and `text_ready` describes chat readiness. Show the corresponding `message` or `text_message` when unavailable.
+2. Open `/calls/ws/{unique-call-id}` using WSS. For voice, send `{"type":"start","mode":"voice","sample_rate":16000,"encoding":"linear16"}`. For text-only chat, send `{"type":"start","mode":"text"}`; this never opens an STT connection or synthesizes audio. Omitting `mode` retains voice behavior.
 3. After `ready`, forward mono PCM16 at 16 kHz in `{"type":"audio","audio":"<base64>"}` frames. The supplied AudioWorklet produces 100 ms frames.
 4. Display `user_transcript`; pause forwarding on `processing`. On `agent_response`, show text/slots/train results and play each `audio_segments` item with `audio_mime`. Resume microphone forwarding after playback. `audio_error` means text remains available.
 5. Select a displayed option with `{"type":"select_train","train_no":"12012","class_code":"CC"}`. A search-result selection starts a seat check, not a simulated booking.
 6. Show `error.message`; close on `error.fatal`. On hang-up, send `{"type":"stop"}`, close the socket/audio context, and stop every microphone track.
 
 Admin requests use `Authorization: Bearer <ADMIN_TOKEN>`. `POST /dashboard/config` has been removed. Provider configuration is never supplied by a caller.
+
+After the greeting, typed replies use `{"type":"user_transcript","text":"..."}` in either session mode. Wait for the current response before sending another turn. Text sessions retain the public connection, start-rate, and duration limits.
 
 ## Local debugging and automated checks
 

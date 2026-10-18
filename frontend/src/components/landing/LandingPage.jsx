@@ -6,7 +6,7 @@ import DashboardSnapshot from './DashboardSnapshot'
 import ChatSnapshot from './ChatSnapshot'
 import { Train, ExternalLink, Terminal } from 'lucide-react'
 
-export default function LandingPage({ onLaunchConsole }) {
+export default function LandingPage({ onLaunchConsole, backendUrl }) {
   const scrollToSection = (id) => {
     const el = document.getElementById(id)
     if (el) {
@@ -115,9 +115,9 @@ export default function LandingPage({ onLaunchConsole }) {
         
         <LatencyMetrics />
         
-        <DashboardSnapshot />
+        <DashboardSnapshot backendUrl={backendUrl} />
         
-        <ChatSnapshot />
+        <ChatSnapshot onLaunchConsole={onLaunchConsole} />
       </main>
 
       {/* Landing Footer */}
@@ -138,7 +138,7 @@ export default function LandingPage({ onLaunchConsole }) {
           <span>LocoVoice AI</span>
         </div>
         <p style={{ maxWidth: '600px', margin: 0, lineHeight: '1.6' }}>
-          An open-source, deterministic voice agent architecture optimized for Indian Railways travel booking, PNR verification, live statuses, and instant cancellations.
+          An open-source voice and text assistant for train searches and seat availability. Booking, cancellation, PNR, and running-status services are not connected.
         </p>
         <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '8px' }}>
           © {new Date().getFullYear()} LocoVoice. All rights reserved.

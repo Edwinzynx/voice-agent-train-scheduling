@@ -413,10 +413,11 @@ def run_mock_brain_step(state: str, user_input: str, context: dict) -> dict:
         result = context.get("result", {})
         if result.get("error") or result.get("success") is False:
             return {"response": result.get("error", "The action could not be completed. Please try again.")}
-        # Just return a greeting or completion string
-        return {
-            "response": f"Wonderful, everything is successfully processed! Details: {context.get('result', '')}. Have a safe journey!"
-        }
+        if "trains" in result:
+            return {"response": f"Found {len(result['trains'])} trains. Choose a displayed train and class to check seats, or tell me its train number and class."}
+        if "seats_available" in result:
+            return {"response": f"Seat status: {result.get('status', 'Unavailable')}. Fare: {result.get('price') if result.get('price') is not None else 'Unavailable'}."}
+        return {"response": "The action is complete. Review the result details on screen."}
     # Fallback
     return {"response": "Hello, how can I help you today?"}
 

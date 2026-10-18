@@ -548,6 +548,6 @@ class FSMCoordinator:
             exec_result = run_brain_step("EXECUTE", "", {"result": result, "dialect": session.dialect})
         except RuntimeError:
             return "The result is displayed on screen. The spoken explanation is temporarily unavailable."
-        return exec_result.get("response", f"Action complete. Details: {result}")
+        return exec_result.get("response", "The action is complete. Review the result details on screen.")
 
 fsm_coordinator = FSMCoordinator()

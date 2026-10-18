@@ -32,7 +32,10 @@ def capabilities():
         missing.append("GROQ_API_KEY")
     if not browser_speech and not settings.sarvam_api_key:
         missing.append("SARVAM_API_KEY")
-    return {"ready": not missing, "missing": missing, "speech_provider": "browser" if browser_speech else "sarvam",
+    text_ready = mock_llm or bool(settings.groq_api_key)
+    return {"ready": not missing, "missing": missing, "text_ready": text_ready,
+            "text_message": "Chat is ready." if text_ready else "Chat is not configured on the server: GROQ_API_KEY",
+            "speech_provider": "browser" if browser_speech else "sarvam",
             "environment": settings.environment, "booking_available": False,
             "message": "Voice service is ready." if not missing else "Voice service is not configured on the server: " + ", ".join(missing)}
 
@@ -64,7 +67,7 @@ async def call_websocket(websocket: WebSocket, call_id: str, db: Session = Depen
         await websocket.close(code=1008)
         return
     availability = capabilities()
-    if not availability["ready"]:
+    if not availability["text_ready"]:
         await websocket.send_json({"type": "error", "message": availability["message"], "fatal": True})
         await websocket.close(code=1013)
         return
@@ -77,6 +80,7 @@ async def call_websocket(websocket: WebSocket, call_id: str, db: Session = Depen
     turns = asyncio.Queue(maxsize=4)
     send_lock = asyncio.Lock()
     started = False
+    voice_mode = True
     processing = False
     failed = False
     deadline = time.monotonic() + 600
@@ -92,7 +96,7 @@ async def call_websocket(websocket: WebSocket, call_id: str, db: Session = Depen
                    "last_action_result": session.last_action_result}
         if payload["last_action_result"] and "trains" in payload["last_action_result"]:
             payload["last_action_result"] = {**payload["last_action_result"], "trains": public_trains(payload["last_action_result"]["trains"])}
-        if availability["speech_provider"] == "sarvam":
+        if voice_mode and availability["speech_provider"] == "sarvam":
             try:
                 payload["audio_segments"] = await sarvam.synthesize_text(text, "English" if session.state == "LANGUAGE" else session.dialect)
                 payload["audio_mime"] = "audio/wav"
@@ -172,7 +176,13 @@ async def call_websocket(websocket: WebSocket, call_id: str, db: Session = Depen
             data = json.loads(raw)
             kind = data.get("type")
             if kind == "start" and not started:
-                if availability["speech_provider"] == "sarvam":
+                mode = data.get("mode", "voice")
+                if mode not in ("voice", "text"):
+                    raise ValueError("Choose voice or text mode.")
+                voice_mode = mode == "voice"
+                if voice_mode and not availability["ready"]:
+                    raise RuntimeError(availability["message"])
+                if voice_mode and availability["speech_provider"] == "sarvam":
                     if data.get("sample_rate") != 16000 or data.get("encoding") != "linear16":
                         raise ValueError("Microphone audio must be 16 kHz mono PCM.")
                     speech = await sarvam.connect_transcription()

@@ -6,49 +6,49 @@ export default function KeyFeatures() {
     {
       icon: <Globe size={24} style={{ color: 'var(--color-primary)' }} />,
       title: "Multilingual Voice Support",
-      desc: "Supports 50+ languages and dialects, specifically optimized for Indian English, Hindi, and Hinglish (code-switching) with dynamic context adaptation."
+      desc: "Choose English, Hindi, or Hinglish for your conversation. Sarvam handles production speech input and spoken responses."
     },
     {
       icon: <ShieldAlert size={24} style={{ color: 'var(--color-secondary)' }} />,
-      title: "Hallucination-Free Guardrails",
-      desc: "Uses a deterministic Finite State Machine (FSM) to bind the LLM response flow, ensuring zero hallucination for ticket fares, seat bookings, and PNR details."
+      title: "Journey Validation",
+      desc: "Checks required journey details, travel dates, and train selection before acting. Availability and fares come from the connected train service."
     },
     {
       icon: <Cpu size={24} style={{ color: 'var(--color-success)' }} />,
       title: "Natural Voice Conversations",
-      desc: "Sub-500ms voice response latency, active voice interruption handling, and intelligent filler-word ingestion for a highly conversational flow."
+      desc: "Speak after the agent finishes, or type a reply during your call. Responses stay visible in the conversation."
     },
     {
       icon: <HeartHandshake size={24} style={{ color: 'var(--color-warning)' }} />,
-      title: "Human-in-the-Loop",
-      desc: "Seamless escalation to human railway station desk agents when conversational parameters fall outside the automated FSM rules, maintaining full call transcript history."
+      title: "Review Before Confirming",
+      desc: "Review the route, date, and selected class before confirming. Change details whenever the readback does not match your journey."
     },
     {
       icon: <Database size={24} style={{ color: 'var(--color-danger)' }} />,
-      title: "Deep API Integrations",
-      desc: "Direct database connectors to real-time seat inventory, live PNR databases, SMS-gateways, and Twilio voice networks for out-of-the-box deployment."
+      title: "Connected Train Data",
+      desc: "Search trains and inspect seat availability through the existing railway data provider. Unconnected booking services are explicitly unavailable."
     },
     {
       icon: <BarChart2 size={24} style={{ color: 'var(--color-primary)' }} />,
       title: "Automated Evaluation Framework",
-      desc: "Integrated offline and online simulator evaluating success rates, intent-matching accuracy, and slot correctness over hundreds of concurrent testing threads."
+      desc: "Owners can inspect recorded dialogue evaluations and backend processing metrics. Diagnostic results are separate from live railway operations."
     }
   ]
 
   const useCases = [
-    "Automatic Ticket Booking & Confirmation",
-    "Real-time PNR Status Checks",
-    "Seat Availability & Berth Selection Querying",
-    "Live Train Delays & Platform Notifications",
-    "Ticket Cancellations & Instant Refunds Processing",
-    "Passenger Grievances & Emergency Handoffs"
+    "Train searches by route and date",
+    "Travel date validation",
+    "Train and class selection",
+    "Seat availability checks",
+    "Journey review and corrections",
+    "Owner conversation records"
   ]
 
   return (
     <section id="features-section" className="landing-section">
       <h2 className="landing-section-title">Engineered for Indian Railways Operations</h2>
       <p className="landing-section-subtitle">
-        LocoVoice replaces slow and frustrating IVR interfaces with an intelligent, conversational voice bot that resolves booking flows in seconds.
+        Explore the connected train search and seat availability flow, with explicit confirmation and clear service limitations.
       </p>
 
       {/* Grid of Key Features */}

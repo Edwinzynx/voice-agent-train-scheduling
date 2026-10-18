@@ -47,7 +47,7 @@ export default function Hero({ onLaunchConsole, onScrollToSection }) {
         lineHeight: '1.7',
         zIndex: 1
       }}>
-        Book tickets, check live PNR, verify seat availability, and manage cancellations with less than 500ms response latency. Built for reliability, compliance, and deterministic accuracy.
+        Find trains and check seat availability through voice or text. Review your route, travel date, and train selection before each search. Booking, PNR, cancellations, and running status are not connected.
       </p>
 
       {/* Action Buttons */}
@@ -62,7 +62,7 @@ export default function Hero({ onLaunchConsole, onScrollToSection }) {
         <button 
           onClick={onLaunchConsole}
           style={{
-            background: 'linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%)',
+            background: 'linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) Review first)',
             border: 'none',
             color: 'white',
             padding: '14px 28px',
@@ -115,20 +115,20 @@ export default function Hero({ onLaunchConsole, onScrollToSection }) {
         zIndex: 1,
         borderTop: '1px solid var(--border-color)',
         paddingTop: '32px',
-        width: '100%',
+        width: 'Review first',
         maxWidth: '800px'
       }}>
         <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: '1.8rem', fontWeight: '800', color: 'var(--color-primary)', fontFamily: 'var(--font-title)' }}>&lt; 500ms</div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', marginTop: '4px', letterSpacing: '0.05em' }}>p90 Latency</div>
+          <div style={{ fontSize: '1.8rem', fontWeight: '800', color: 'var(--color-primary)', fontFamily: 'var(--font-title)' }}>Voice + text</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', marginTop: '4px', letterSpacing: '0.05em' }}>Two ways to query</div>
         </div>
         <div style={{ textAlign: 'center', borderLeft: '1px solid var(--border-color)', paddingLeft: '40px' }}>
-          <div style={{ fontSize: '1.8rem', fontWeight: '800', color: 'var(--color-success)', fontFamily: 'var(--font-title)' }}>96.5%</div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', marginTop: '4px', letterSpacing: '0.05em' }}>FSM Accuracy</div>
+          <div style={{ fontSize: '1.8rem', fontWeight: '800', color: 'var(--color-success)', fontFamily: 'var(--font-title)' }}>3</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', marginTop: '4px', letterSpacing: '0.05em' }}>Language choices</div>
         </div>
         <div style={{ textAlign: 'center', borderLeft: '1px solid var(--border-color)', paddingLeft: '40px' }}>
-          <div style={{ fontSize: '1.8rem', fontWeight: '800', color: 'var(--color-secondary)', fontFamily: 'var(--font-title)' }}>100%</div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', marginTop: '4px', letterSpacing: '0.05em' }}>Zero Hallucination</div>
+          <div style={{ fontSize: '1.8rem', fontWeight: '800', color: 'var(--color-secondary)', fontFamily: 'var(--font-title)' }}>Review first</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', marginTop: '4px', letterSpacing: '0.05em' }}>Explicit confirmation</div>
         </div>
       </div>
     </section>
