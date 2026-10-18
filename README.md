@@ -34,8 +34,8 @@ Configure these **server-side Render environment variables** before deploying:
 | `ALLOWED_ORIGINS` | `https://locovoice-skkrrt-train-agent.vercel.app` |
 | `LLM_MODEL` | `qwen/qwen3.8-27b` (configurable; verify account availability) |
 | `SARVAM_STT_MODEL` | `saaras:v3-realtime` |
-| `SARVAM_TTS_MODEL` | `bulbul:v3` |
-| `SARVAM_VOICE` | `shubh` |
+| `SARVAM_TTS_MODEL` | `bulbul:v4-flash` |
+| `SARVAM_VOICE` | `aarti_hi_customer` (Aarti) |
 
 Set Vercel's `VITE_BACKEND_URL` to the existing HTTPS backend URL. Never put provider keys or `ADMIN_TOKEN` in Vercel frontend variables, JavaScript, or Git. The owner dashboard accepts only its access token, held in memory until reload/lock.
 

@@ -17,8 +17,8 @@ class AppSettings(BaseModel):
     admin_token: str = ""
     sarvam_api_key: str = ""
     sarvam_stt_model: str = "saaras:v3-realtime"
-    sarvam_tts_model: str = "bulbul:v3"
-    sarvam_voice: str = "shubh"
+    sarvam_tts_model: str = "bulbul:v4-flash"
+    sarvam_voice: str = "aarti_hi_customer"
     allow_simulated_railway: bool = False
     groq_api_key: str = ""
     deepgram_api_key: str = ""
