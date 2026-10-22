@@ -66,7 +66,12 @@ export default function CommandCenter({ backendUrl, onExit, embedded = false }) 
     finally { setUnlocking(false) }
   }
   const lock = () => { setAdminToken(''); setStats(null); setStatsError(''); setAdminError('') }
-  const metric = (key, suffix = '') => stats?.[key] != null ? `${Number(stats[key]).toLocaleString('en-IN', { maximumFractionDigits: 0 })}${suffix}` : '—'
+  const metric = (key, suffix = '') => {
+    if (stats?.[key] == null) return '—'
+    const value = Number(stats[key])
+    if (suffix === ' ms' && value < 1) return '<1 ms'
+    return `${value.toLocaleString('en-IN', { maximumFractionDigits: suffix === ' ms' ? 2 : 0 })}${suffix}`
+  }
   const current = sections.find(item => item.id === section)
 
   return <div className={`command-center ${embedded ? 'embedded' : ''}`}>

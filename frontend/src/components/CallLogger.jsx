@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { Database, FileText, CheckCircle, XCircle, Search, RefreshCw, Layers } from 'lucide-react'
 
+const latencyLabel = value => value == null || value <= 0 ? '—' : value < 1 ? '<1 ms' : `${value.toFixed(2)} ms`
+
 export default function CallLogger({ backendUrl, activeCallData, adminToken }) {
   const [calls, setCalls] = useState([])
   const [selectedCall, setSelectedCall] = useState(null)
@@ -188,7 +190,7 @@ export default function CallLogger({ backendUrl, activeCallData, adminToken }) {
                   <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                     {call.duration_seconds.toFixed(0)}s
                   </span>
-                  {call.success ? (
+                  {call.status === 'completed' ? (
                     <CheckCircle size={18} style={{ color: 'var(--color-success)' }} />
                   ) : (
                     <XCircle size={18} style={{ color: 'var(--text-muted)' }} />
@@ -239,12 +241,12 @@ export default function CallLogger({ backendUrl, activeCallData, adminToken }) {
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px', background: 'rgba(0,0,0,0.1)', borderRadius: '8px', padding: '12px', fontSize: '0.85rem' }}>
             <div>
-              <p style={{ color: 'var(--text-secondary)' }}>Status: <strong style={{ color: selectedCall.call.success ? 'var(--color-success)' : 'var(--text-muted)' }}>{selectedCall.call.success ? "Success" : "Failed / Cancelled"}</strong></p>
+              <p style={{ color: 'var(--text-secondary)' }}>Session status: <strong style={{ color: selectedCall.call.status === 'completed' ? 'var(--color-success)' : 'var(--text-muted)' }}>{selectedCall.call.status === 'completed' ? 'Completed' : selectedCall.call.status === 'active' ? 'Active' : selectedCall.call.status === 'failed' ? 'Failed' : selectedCall.call.status}</strong></p>
               <p style={{ color: 'var(--text-secondary)' }}>Duration: <strong>{selectedCall.call.duration_seconds.toFixed(1)} seconds</strong></p>
             </div>
             <div>
-              <p style={{ color: 'var(--text-secondary)' }}>Avg p50 Latency: <strong>{selectedCall.call.p50_latency_ms.toFixed(0)} ms</strong></p>
-              <p style={{ color: 'var(--text-secondary)' }}>Avg p90 Latency: <strong>{selectedCall.call.p90_latency_ms.toFixed(0)} ms</strong></p>
+              <p style={{ color: 'var(--text-secondary)' }}>Session processing p50: <strong>{latencyLabel(selectedCall.call.p50_latency_ms)}</strong></p>
+              <p style={{ color: 'var(--text-secondary)' }}>Session processing p90: <strong>{latencyLabel(selectedCall.call.p90_latency_ms)}</strong></p>
             </div>
           </div>
 
@@ -259,7 +261,7 @@ export default function CallLogger({ backendUrl, activeCallData, adminToken }) {
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
                   <span>{log.direction.toUpperCase()} ({log.state})</span>
-                  {log.latency_ms > 0 && <span style={{ color: 'var(--color-secondary)' }}>Latency: {log.latency_ms.toFixed(0)}ms</span>}
+                  {log.latency_ms > 0 && <span style={{ color: 'var(--color-secondary)' }}>Processing: {latencyLabel(log.latency_ms)}</span>}
                 </div>
                 <div>{log.text}</div>
               </div>
