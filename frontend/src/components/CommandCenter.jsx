@@ -12,8 +12,8 @@ const sections = [
   { id: 'testing', label: 'FSM Testing', icon: ShieldCheck },
 ]
 
-export default function CommandCenter({ backendUrl, onExit, embedded = false }) {
-  const [section, setSection] = useState('operations')
+export default function CommandCenter({ backendUrl, onExit, embedded = false, initialSection = 'operations' }) {
+  const [section, setSection] = useState(initialSection)
   const [adminToken, setAdminToken] = useState('')
   const [tokenDraft, setTokenDraft] = useState('')
   const [adminError, setAdminError] = useState('')

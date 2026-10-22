@@ -6,7 +6,7 @@ import DashboardSnapshot from './DashboardSnapshot'
 import ChatSnapshot from './ChatSnapshot'
 import { Train, ExternalLink, Terminal } from 'lucide-react'
 
-export default function LandingPage({ onLaunchConsole }) {
+export default function LandingPage({ onLaunchConsole, onOpenMetrics }) {
   const scrollToSection = (id) => {
     const el = document.getElementById(id)
     if (el) {
@@ -56,7 +56,7 @@ export default function LandingPage({ onLaunchConsole }) {
             Features
           </button>
           <button 
-            onClick={() => scrollToSection('latency-section')}
+            onClick={onOpenMetrics}
             style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: '0.9rem', fontWeight: '600', cursor: 'pointer', transition: 'var(--transition-smooth)' }}
             className="preset-pill"
           >
@@ -113,7 +113,7 @@ export default function LandingPage({ onLaunchConsole }) {
         
         <KeyFeatures />
         
-        <LatencyMetrics />
+        <LatencyMetrics onOpenMetrics={onOpenMetrics} />
         
         <DashboardSnapshot />
         
