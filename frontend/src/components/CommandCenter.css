@@ -67,3 +67,43 @@
 @media (max-width: 1150px) { .command-center { grid-template-columns: 205px minmax(0, 1fr); } .command-main { padding: 24px; } .command-center .voice-playground { grid-template-columns: 1fr; } .command-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .command-center .query-panel { padding: 20px; } .command-center .query-list { grid-template-columns: 1fr; } }
 @media (max-width: 700px) { .command-center { grid-template-columns: 1fr; } .command-sidebar { padding: 20px; gap: 20px; border-right: 0; border-bottom: 1px solid var(--border-color); } .command-sidebar nav { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; } .command-sidebar nav button { padding: 12px 8px; font-size: .72rem; } .sidebar-access { padding-top: 16px; } .sidebar-access form { display: grid; grid-template-columns: 1fr auto; gap: 8px; } .sidebar-access form p { grid-column: 1 / -1; margin: 8px 0; } .sidebar-access .playground-button { margin-top: 0; } .sidebar-service { display: none; } .command-main, .command-center.embedded .command-main { padding: 20px 16px; } .command-heading h1 { font-size: 1.6rem; } .command-metrics { gap: 10px; } .command-metrics .dashboard-mini-card { padding: 14px; } .owner-gate { padding: 24px; } .performance-panel dl { grid-template-columns: 1fr; } .command-center .live-phone { height: 580px; } }
 .metrics-context { color: var(--text-secondary); font-size: .75rem; line-height: 1.8; margin: -8px 0 24px; }
+/* Keep the complete conversation and composer within a typical laptop viewport. */
+@media (min-width: 1151px) {
+  .command-center .command-main { padding: 20px 32px 16px; }
+  .command-center .command-heading { margin-bottom: 18px; }
+  .command-center .command-heading h1 { margin: 5px 0; font-size: 1.75rem; }
+  .command-center .operations-title { margin-bottom: 12px; }
+  .command-center .live-phone { height: clamp(430px, calc(100dvh - 190px), 640px); }
+  .command-center .query-panel { padding: 20px 24px; }
+  .command-center .voice-call-orb { width: 64px; height: 64px; margin: 18px auto; }
+  .command-center .voice-call-orb svg { width: 29px; }
+  .command-center .voice-playground .query-panel h2 { font-size: clamp(1.5rem, 2vw, 1.9rem); margin: 14px auto 10px; }
+  .command-center .voice-languages { margin: 12px 0 14px; }
+  .command-center .session-actions { margin-top: 14px; gap: 6px; }
+  .command-center .voice-start-button { min-height: 54px; }
+  .command-center .voice-text-alternative { padding: 8px; }
+  .command-center .voice-query-examples { margin-top: 12px; padding-top: 12px; }
+  .command-center .service-note { margin: 10px 8px 0; font-size: .65rem; }
+  .command-center .command-footer { margin-top: 12px; }
+  .command-center .phone-screen, .command-center .phone-body { min-height: 0; }
+  .command-center .phone-header, .command-center .phone-footer { flex-shrink: 0; }
+}
+@media (max-width: 1150px) and (min-width: 851px) {
+  .command-center .voice-playground { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  .command-center .voice-playground .query-panel h2 { font-size: 1.5rem; }
+  .command-center .voice-call-orb { width: 60px; height: 60px; margin: 18px auto; }
+  .command-center .command-heading { margin-bottom: 16px; }
+  .command-center .live-phone { height: clamp(480px, calc(100dvh - 200px), 620px); }
+}
+@media (min-width: 1151px) and (max-height: 800px) {
+  .command-center .command-main { padding-top: 16px; }
+  .command-center .command-heading { margin-bottom: 12px; }
+  .command-center .voice-call-orb { width: 54px; height: 54px; margin: 12px auto; }
+  .command-center .voice-playground .query-panel h2 { font-size: 1.65rem; margin: 10px auto; }
+  .command-center .query-panel { padding: 16px 20px; }
+  .command-center .voice-languages { margin: 10px 0; }
+  .command-center .session-actions { margin-top: 10px; }
+  .command-center .voice-start-button { min-height: 50px; }
+  .command-center .live-phone { height: clamp(420px, calc(100dvh - 190px), 600px); }
+  .command-main:has(.backend-notice) .live-phone { height: max(400px, calc(100dvh - 255px)); }
+}
