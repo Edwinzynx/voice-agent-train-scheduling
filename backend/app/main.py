@@ -2,7 +2,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .database import engine, Base
-from .routers import calls, dashboard, eval
+from .routers import calls, dashboard, eval, performance
 from .config import configured_origins
 
 # Setup logging
@@ -42,6 +42,7 @@ app.add_middleware(
 # Mount Routers
 app.include_router(calls.router)
 app.include_router(dashboard.router)
+app.include_router(performance.router)
 app.include_router(eval.router)
 
 @app.get("/")

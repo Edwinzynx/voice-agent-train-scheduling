@@ -9,6 +9,6 @@ export default function App() {
   const [viewMode, setViewMode] = useState('landing')
   const navigate = mode => { setViewMode(mode); window.scrollTo({ top: 0 }) }
   return viewMode === 'landing'
-    ? <LandingPage onLaunchConsole={() => navigate('sandbox')} onOpenMetrics={() => navigate('performance')} />
+    ? <LandingPage backendUrl={BACKEND_URL} onLaunchConsole={() => navigate('sandbox')} />
     : <CommandCenter backendUrl={BACKEND_URL} initialSection={viewMode === 'performance' ? 'performance' : 'operations'} onExit={() => navigate('landing')} />
 }
