@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { ArrowRight, Clock, MessageSquare, Mic, MicOff, PhoneOff, Send, Train, Volume2 } from 'lucide-react'
+import { ArrowRight, MessageSquare, Mic, MicOff, PhoneOff, Send, Train, Volume2 } from 'lucide-react'
 import useVoiceCall from './useVoiceCall'
 import TrainOptions from './TrainOptions'
 import './VoicePlayground.css'
@@ -13,7 +13,7 @@ const queries = [
 export default function WebRTCCall({ backendUrl, onCallStateChange }) {
   const call = useVoiceCall(backendUrl, onCallStateChange)
   const { inCall, currentState, transcript, isMuted, agentSpeaking, error, mode, isProcessing,
-    lastLatency, environment, startCall, endCall, toggleMute, selectTrain, sendText } = call
+    environment, startCall, endCall, toggleMute, selectTrain, sendText } = call
   const [draft, setDraft] = useState('')
   const feed = useRef(null)
   const input = useRef(null)
@@ -37,25 +37,25 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
     <div className="voice-playground">
       <div className="playground-context">
         <div className="glass-panel query-panel">
-          <span className="playground-eyebrow">YOUR JOURNEY STARTS HERE</span>
-          <h2><MessageSquare size={22} /> Train queries playground</h2>
-          <p>Find a train, choose your class, and check availability. Type a message or speak in English, Hindi, or Hinglish.</p>
-          <div className="query-list">
-            {queries.map(query => <button key={query} className="preset-pill query-shortcut" disabled={!canSend} onClick={() => submit(query)}>
-              <span>{query}</span><ArrowRight size={18} />
-            </button>)}
-          </div>
-          <p className="query-hint">Each query goes to the connected backend. Review the route and date before confirming.</p>
-          <div className="session-actions">
+          <span className="playground-eyebrow">MEET YOUR RAILWAY VOICE ASSISTANT</span>
+          <div className={`voice-call-orb ${inCall && mode === 'voice' ? 'call-active' : ''}`}><Mic size={36} /></div>
+          <h2>{inCall ? mode === 'voice' ? 'Your conversation is live' : 'Your chat is connected' : 'Your next journey starts with a hello.'}</h2>
+          <p>Speak naturally. LocoVoice helps you find trains, choose a class, and check seat availability.</p>
+          <div className="voice-languages">English <span>·</span> हिंदी <span>·</span> Hinglish</div>
+          <div className="session-actions voice-primary-actions">
             {!inCall ? <>
-              <button className="playground-button primary" onClick={() => startCall({ mode: 'voice' })}><Mic size={17} /> Start voice call</button>
-              <button className="playground-button" onClick={() => startCall({ mode: 'text' })}><MessageSquare size={17} /> Start chat</button>
+              <button className="playground-button primary voice-start-button" disabled={!canSend} onClick={() => startCall({ mode: 'voice' })}><Mic size={24} /> Start voice call <ArrowRight size={20} /></button>
+              <p className="voice-permission-note">Allow microphone access when prompted, then say hello.</p>
+              <button className="voice-text-alternative" disabled={!canSend} onClick={() => { startCall({ mode: 'text' }); input.current?.focus() }}><MessageSquare size={14} /> Prefer typing? Start a chat</button>
             </> : <>
+              <div className="voice-live-status" role="status">{status}</div>
               {mode === 'voice' && <button className="playground-button" aria-pressed={isMuted} onClick={toggleMute}>{isMuted ? <MicOff size={17} /> : <Mic size={17} />}{isMuted ? 'Unmute' : 'Mute'}</button>}
               <button className="playground-button end-session" onClick={endCall}><PhoneOff size={17} /> End {mode === 'voice' ? 'call' : 'chat'}</button>
             </>}
           </div>
-          {lastLatency !== null && <div className="processing-metric"><Clock size={16} /><span>Last agent processing time <strong>{lastLatency.toLocaleString()} ms</strong></span></div>}
+          <details className="voice-query-examples"><summary>Need an idea? Try asking…</summary><div className="query-list">
+            {queries.map(query => <div key={query} className="voice-example">“{query}”</div>)}
+          </div></details>
         </div>
         <div className="service-note"><Train size={18} /><p>Train search and seat checks are available. Booking, cancellations, PNR lookup, and live running status are not connected.</p></div>
         {environment === 'development' && <p className="debug-note">Local debugging backend · responses may use the local parser.</p>}
@@ -69,7 +69,7 @@ export default function WebRTCCall({ backendUrl, onCallStateChange }) {
             <span className="session-mode">{inCall ? mode === 'text' ? 'CHAT' : 'VOICE' : 'SANDBOX'}</span>
           </div>
           <div className="phone-body" ref={feed} role="log" aria-label="Conversation" aria-live="polite">
-            {!transcript.length && <div className="conversation-welcome"><div className="welcome-icon"><Train size={30} /></div><h3>Where are you headed?</h3><p>Choose a query to get started, or tell LocoVoice about your journey.</p><span>English · हिंदी · Hinglish</span></div>}
+            {!transcript.length && <div className="conversation-welcome"><div className="welcome-icon"><Volume2 size={30} /></div><h3>{inCall ? 'LocoVoice is getting ready' : 'Your conversation appears here'}</h3><p>{inCall ? 'Follow the agent’s replies here as you plan your journey.' : 'Start a voice call, then tell us where you want to go. You’ll see your words, the agent’s replies, and train options here.'}</p><span>Speak · Confirm your journey · Explore trains</span></div>}
             {transcript.map((message, index) => <React.Fragment key={index}>
               <div className={`bubble ${message.sender}`}><span className="message-speaker">{message.sender === 'agent' ? 'LocoVoice' : 'You'}</span>{message.text}</div>
               {index === latestAgentIndex && message.availableTrains?.length > 0 && <TrainOptions

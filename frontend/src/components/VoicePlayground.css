@@ -59,3 +59,29 @@
 @media (max-width: 850px) { .voice-playground { grid-template-columns: 1fr; gap: 28px; } .live-phone { max-width: 440px; } .query-panel { padding: 24px; } }
 @media (max-width: 420px) { .query-panel { padding: 20px; } .query-panel h2 { font-size: 1.2rem; } .live-phone { border-width: 6px; border-radius: 26px; height: 620px; } .session-actions { flex-direction: column; } }
 @media (prefers-reduced-motion: reduce) { .typing-indicator i { animation: none; } }
+/* Voice is the primary entry point; the conversation stays alongside it. */
+.voice-playground .query-panel { text-align: center; border-color: #8b5cf650; background: radial-gradient(ellipse at 50% 25%, #7551d825, transparent 65%), #101522; }
+.voice-call-orb { display: grid; place-items: center; width: 90px; height: 90px; border-radius: 50%; margin: 28px auto; color: white; background: linear-gradient(135deg, #818cf8, #9333ea); box-shadow: 0 0 0 10px #8b5cf610, 0 0 0 20px #8b5cf608, 0 12px 42px #8b5cf640; }
+.voice-call-orb.call-active { background: linear-gradient(135deg, #34d399, #0d9488); box-shadow: 0 0 0 10px #34d39910, 0 0 40px #34d39920; }
+.command-center .query-panel h2 { display: block; font-size: clamp(1.6rem, 2.4vw, 2.3rem); line-height: 1.15; max-width: 400px; margin: 20px auto 14px; }
+.voice-languages { margin: 16px 0 24px; font-size: .75rem; color: #c4b5fd; }
+.voice-languages span { margin: 0 8px; color: #6b7280; }
+.voice-primary-actions { justify-content: center; }
+.command-center .voice-start-button, .voice-start-button { width: 100%; min-height: 64px; font-size: 1.05rem; border-radius: 14px; gap: 12px; box-shadow: 0 8px 30px #8b5cf645; }
+.voice-start-button:hover:not(:disabled) { filter: brightness(1.12); }
+.query-panel .voice-permission-note { width: 100%; font-size: .65rem; color: #a5adc1; margin-top: 2px; }
+.voice-text-alternative { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: none; background: transparent; color: #a5adc1; font: .73rem var(--font-family); cursor: pointer; padding: 12px; }
+.voice-text-alternative:hover { color: white; text-decoration: underline; }
+.voice-live-status { width: 100%; color: #6ee7b7; font-size: .85rem; padding: 12px; }
+.voice-query-examples { text-align: left; margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border-color); color: #a5adc1; font-size: .73rem; line-height: 1.6; }
+.voice-query-examples summary { cursor: pointer; }
+.voice-example { border-left: 2px solid #8b5cf660; padding-left: 12px; }
+.voice-query-examples .query-list { margin: 16px 0 0; }
+@media (max-width: 700px) {
+  .command-sidebar .sidebar-access { display: none; }
+  .command-sidebar:has(nav button:not(:first-child)[aria-current]) .sidebar-access { display: block; }
+  .command-sidebar { gap: 12px; }
+  .voice-call-orb { width: 70px; height: 70px; margin: 22px auto; }
+}
+.command-center .voice-playground .query-panel h2 { font-size: clamp(1.6rem, 2.4vw, 2.3rem); }
+.command-center .voice-playground .voice-start-button { font-size: 1.05rem; }

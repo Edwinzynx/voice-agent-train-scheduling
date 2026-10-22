@@ -101,7 +101,7 @@ export default function Hero({ onLaunchConsole, onScrollToSection }) {
           className="clickable-card"
         >
           <Activity size={18} />
-          Explore Interactive Demo
+          Watch Voice Demo
           <ArrowRight size={16} />
         </button>
       </div>

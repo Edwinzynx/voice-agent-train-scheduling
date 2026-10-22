@@ -12,7 +12,7 @@ The production speech integration uses Sarvam (realtime STT and Bulbul v3 TTS), 
 - API keys are managed by the owner in the server environment. There is no user-supplied-key form or configuration-write API.
 - Admin analytics, transcripts, provider metadata, and evaluations require an owner bearer token. Public calls do not expose it or provider secrets.
 - Local debugging may use browser speech and a rule-based parser. Production never falls back to those modes.
-- The project page and sandbox share the same command center: Live Operations, Call Records, Performance, and FSM Testing. Metrics are read from the protected backend; no simulated counters or canned chat replies are displayed.
+- The project page has a labeled simulated conversation with sample journey data. The sandbox connects to the real backend and puts voice calls first. Metrics, call records, and evaluations are owner-only.
 - Text chat uses the same journey and confirmation flow without requesting microphone access or calling Sarvam. Voice calls support typed replies as well.
 
 ## Deployment
@@ -28,6 +28,7 @@ Configure these **server-side Render environment variables** before deploying:
 | Variable | Value |
 | --- | --- |
 | `APP_ENV` | `production` |
+| `DATABASE_URL` | Managed PostgreSQL connection URL; use the Neon connection URL with its TLS options, or Render's internal URL for Render Postgres |
 | `GROQ_API_KEY` | Owner's Groq API key |
 | `SARVAM_API_KEY` | Owner's Sarvam API key |
 | `ADMIN_TOKEN` | A long randomly generated owner access token; keep it private |
@@ -46,7 +47,27 @@ Release backend and frontend together: the updated audio protocol requires both.
 ### Budget and hosting limitations
 
 Stay on existing free hosting while validating the integration. No paid plan or credits are provisioned by this repository.
-Render Free can spin down when idle and loses its local SQLite database on restarts/redeploys. **Call history is not durable with the default deployment.** For retained history, use a persistent disk on a suitable Render plan or configure a supported external database before treating history as production data. Changing the database requires migrating existing records.
+Render Free can spin down when idle and loses local files on restarts/redeploys. Production now requires an explicitly configured database URL; use managed PostgreSQL for retained call history. Render's free Postgres expires after 30 days, so it is not a permanent storage solution. No paid resources are created by installing this code.
+
+### Durable call history
+
+1. Use a managed PostgreSQL database independent of the backend filesystem. For the no-cost setup, create a **Neon Free** project in AWS Oregon near `voice-agent-train-scheduling`. Stay on Free and monitor its storage/compute limits. Render's expiring free Postgres is not used for this setup.
+2. Set `DATABASE_URL` on the **existing Render backend service** to the Neon connection URL, preserving `sslmode=require` and any other supplied TLS options. Do not add it to Vercel, frontend code, or Git. `postgres://`, `postgresql://`, and `postgresql+psycopg://` are supported. If using paid Render Postgres instead, use its Internal Database URL in the same region.
+3. Deploy the updated backend requirements and code. The server initializes missing tables, checks pooled connections before reuse, and refuses to start if database initialization fails. Configure Render's process health-check path as `/`; it deliberately does not query Postgres so continuous probes allow Neon to scale to zero. The owner-only `/dashboard/storage-health` checks storage on demand and returns HTTP 503 if it is unavailable.
+4. Complete a test call, confirm it appears in Call Records, restart the backend, and confirm the same record and transcript remain. Call records, turn logs, and evaluation runs persist; live sockets and in-progress dialogue state do not resume after a restart.
+
+For an existing SQLite database, take an offline backup before switching storage. Stop new calls and let active calls finish before exporting; a redeploy may destroy an ephemeral SQLite file. If Render has already removed the file, these changes cannot recover it. Use the correct source file: SQLite paths are relative to the backend's working directory, and the repository may contain more than one local database.
+
+The importer reads the source in read-only mode, preserves IDs and timestamps, copies all three tables in one transaction, verifies row counts, and refuses a populated destination. It does not merge or overwrite records. Set `DATABASE_URL` securely in the migration process environment, using Render's external URL when running outside its private network. Do not paste a URL containing a password into command history.
+
+```sh
+# Inspect the offline backup; no destination writes.
+python backend/scripts/migrate_sqlite.py --source /path/to/backup.db
+# Import into an empty PostgreSQL database while application writes are stopped.
+python backend/scripts/migrate_sqlite.py --source /path/to/backup.db --apply
+```
+
+Postgres storage is independent of backend deployments. Keep provider backups enabled and test restores. Schema creation handles initial setup only; future schema changes need an explicit migration. Automated CI uses disposable Postgres to verify import and persistence across new database connections.
 
 Public calls are limited to two concurrent connections per backend process, three starts per client IP in five minutes, and ten minutes per call. These in-memory limits reset on restart and assume a single worker; they are not a global spending cap. Set provider-side quotas/budgets as well. Streaming currently pauses microphone forwarding while a response is generated or spoken; full-duplex interruption is not implemented.
 

@@ -64,6 +64,8 @@ class ConfigManager:
             values["db_url"] = os.environ["DATABASE_URL"]
         if production:
             values["environment"] = "production"
+            if not values.get("db_url"):
+                raise ValueError("Set DATABASE_URL to durable storage before starting production. Local SQLite is only the development default.")
         self.settings = AppSettings.model_validate(values)
         if self.settings.environment == "production":
             self.settings.use_mock_llm = False

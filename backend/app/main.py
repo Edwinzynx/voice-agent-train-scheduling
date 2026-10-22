@@ -16,8 +16,10 @@ logger = logging.getLogger(__name__)
 try:
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables initialized successfully.")
-except Exception as e:
-    logger.error(f"Error creating database tables: {e}")
+except Exception:
+    # Never advertise a healthy service while calls cannot be persisted.
+    logger.error("Database initialization failed. Check DATABASE_URL and database connectivity.")
+    raise RuntimeError("Database initialization failed; refusing to start without call storage.") from None
 
 app = FastAPI(
     title="Train Voice Agent Server",

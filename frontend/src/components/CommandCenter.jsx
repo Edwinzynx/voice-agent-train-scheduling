@@ -89,13 +89,14 @@ export default function CommandCenter({ backendUrl, onExit, embedded = false }) 
     </aside>
     <main className="command-main">
       <header className="command-heading"><div><span className="playground-eyebrow">RAILWAY CONVERSATION WORKSPACE</span><h1>{current.label}</h1><p>{section === 'operations' ? 'Search, speak, and review your journey in one place.' : section === 'records' ? 'Review saved conversations and their extracted journey details.' : section === 'performance' ? 'Measured backend processing times from completed sessions.' : 'Inspect dialogue evaluations and run owner diagnostics.'}</p></div><button className="command-refresh" onClick={() => setRefreshKey(key => key + 1)} aria-label="Refresh backend status and metrics"><RefreshCw size={16} /></button></header>
-      <div className="command-metrics">
+      {adminToken && section === 'performance' && <div className="command-metrics">
         <div className="dashboard-mini-card"><span className="lbl">Active sessions</span><strong className="val metric-amber">{metric('active_calls')}</strong><small>{stats ? 'Connected right now' : 'Owner access required'}</small></div>
         <div className="dashboard-mini-card"><span className="lbl">Total sessions</span><strong className="val">{metric('total_calls')}</strong><small>{stats ? 'Recorded in this database' : 'Owner access required'}</small></div>
         <div className="dashboard-mini-card"><span className="lbl">Avg. session p50</span><strong className="val metric-indigo">{metric('avg_p50_ms', ' ms')}</strong><small>{stats ? 'Backend processing time' : 'Owner access required'}</small></div>
         <div className="dashboard-mini-card"><span className="lbl">Avg. session p90</span><strong className="val metric-purple">{metric('avg_p90_ms', ' ms')}</strong><small>{stats ? 'Backend processing time' : 'Owner access required'}</small></div>
-      </div>
-      {statsError && <p className="owner-error" role="alert">{statsError}</p>}
+      </div>}
+      {statsError && section === 'performance' && <p className="owner-error" role="alert">{statsError}</p>}
+      {adminToken && section === 'performance' && stats && <p className="metrics-context" role="status">{stats.total_calls === 0 ? 'No calls are stored in the connected database yet. If previous calls are missing, check that the backend uses persistent database storage.' : `${stats.completed_calls ?? 'Recorded'} completed sessions in the connected database.`} A dash means no measurement is available. Dialogue evaluation appears only after an evaluation run.</p>}
       {capabilities && !capabilities.ready && <p className="backend-notice" role="status">{capabilities.message}</p>}
       <section hidden={section !== 'operations'} aria-label="Live operations workspace">
         <div className="operations-title"><h2>Passenger conversation</h2><span>{activeCallData.callId ? activeCallData.state.replaceAll('_', ' ') : 'NO ACTIVE SESSION'}</span></div>

@@ -6,7 +6,7 @@ import DashboardSnapshot from './DashboardSnapshot'
 import ChatSnapshot from './ChatSnapshot'
 import { Train, ExternalLink, Terminal } from 'lucide-react'
 
-export default function LandingPage({ onLaunchConsole, backendUrl }) {
+export default function LandingPage({ onLaunchConsole }) {
   const scrollToSection = (id) => {
     const el = document.getElementById(id)
     if (el) {
@@ -67,7 +67,7 @@ export default function LandingPage({ onLaunchConsole, backendUrl }) {
             style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: '0.9rem', fontWeight: '600', cursor: 'pointer', transition: 'var(--transition-smooth)' }}
             className="preset-pill"
           >
-            Live Dashboard
+            Voice Demo
           </button>
           <button 
             onClick={() => scrollToSection('chat-demo-section')}
@@ -115,7 +115,7 @@ export default function LandingPage({ onLaunchConsole, backendUrl }) {
         
         <LatencyMetrics />
         
-        <DashboardSnapshot backendUrl={backendUrl} />
+        <DashboardSnapshot />
         
         <ChatSnapshot onLaunchConsole={onLaunchConsole} />
       </main>
